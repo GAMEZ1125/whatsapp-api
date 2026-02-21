@@ -34,11 +34,11 @@ const options = {
     servers: [
       {
         url: 'http://localhost:3000',
-        description: 'Servidor de desarrollo'
+        description: 'Servidor local'
       },
       {
-        url: 'https://api.tudominio.com',
-        description: 'Servidor de producción'
+        url: 'http://gamez-solutions.ddns.net:3000',
+        description: 'Servidor DDNS (HTTP)'
       }
     ],
     components: {
