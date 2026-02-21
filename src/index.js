@@ -23,7 +23,14 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middlewares de seguridad
-app.use(helmet());
+// Configuración de Helmet menos restrictiva para HTTP
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+  crossOriginOpenerPolicy: false,
+  crossOriginResourcePolicy: false,
+  originAgentCluster: false
+}));
 app.use(cors({
   origin: process.env.ALLOWED_ORIGINS?.split(',') || '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
