@@ -9,12 +9,14 @@ const messageRoutes = require('./message.routes');
 const sessionRoutes = require('./session.routes');
 const contactRoutes = require('./contact.routes');
 const webhookRoutes = require('./webhook.routes');
+const apikeyRoutes = require('./apikey.routes');
 
 // Rutas de la API
 router.use('/messages', messageRoutes);
 router.use('/session', sessionRoutes);
 router.use('/contacts', contactRoutes);
 router.use('/webhooks', webhookRoutes);
+router.use('/auth', apikeyRoutes);
 
 // Información de la API
 router.get('/', (req, res) => {
@@ -27,7 +29,8 @@ router.get('/', (req, res) => {
       messages: '/api/messages',
       session: '/api/session',
       contacts: '/api/contacts',
-      webhooks: '/api/webhooks'
+      webhooks: '/api/webhooks',
+      auth: '/api/auth'
     }
   });
 });
