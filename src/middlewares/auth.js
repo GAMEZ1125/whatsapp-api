@@ -1,10 +1,11 @@
 /**
  * Middleware de Autenticación
- * Soporta múltiples API Keys (master key del .env + keys generadas)
+ * Soporta múltiples API Keys (master key del .env + keys generadas + sesiones de chat)
  */
 
 const logger = require('../config/logger');
 const apikeyService = require('../services/apikey.service');
+const chatSessionService = require('../services/chatSession.service');
 
 /**
  * Verifica la API Key en los headers
@@ -82,6 +83,65 @@ const masterKeyAuth = (req, res, next) => {
 };
 
 /**
+ * Middleware para autenticación de sesiones de chat (agentes)
+ * Acepta tanto Master Key como Session Key
+ */
+const chatSessionAuth = (req, res, next) => {
+  const apiKey = req.headers['x-api-key'];
+  const masterKey = process.env.API_KEY;
+
+  // En desarrollo sin master key configurada, permitir
+  if (!masterKey && process.env.NODE_ENV === 'development') {
+    logger.warn('⚠️ Modo desarrollo - Sin autenticación');
+    req.apiKeyInfo = { isMaster: true, permissions: ['*'] };
+    return next();
+  }
+
+  if (!apiKey) {
+    return res.status(401).json({
+      success: false,
+      error: 'API Key requerida',
+      code: 'MISSING_API_KEY'
+    });
+  }
+
+  // Primero verificar si es Master Key
+  if (apiKey === masterKey) {
+    req.apiKeyInfo = { isMaster: true, permissions: ['*'] };
+    return next();
+  }
+
+  // Verificar si es una Session Key
+  const session = chatSessionService.getSessionByApiKey(apiKey);
+  
+  if (session) {
+    if (session.status !== 'active') {
+      return res.status(403).json({
+        success: false,
+        error: 'La sesión no está activa',
+        code: 'SESSION_INACTIVE'
+      });
+    }
+    
+    req.chatSession = session;
+    req.apiKeyInfo = { 
+      isSession: true, 
+      sessionId: session.id,
+      permissions: session.permissions 
+    };
+    return next();
+  }
+
+  // No es ninguna key válida
+  logger.warn(`Intento de acceso con key inválida: ${apiKey.substring(0, 8)}...`);
+  return res.status(403).json({
+    success: false,
+    error: 'API Key o Session Key inválida',
+    code: 'INVALID_KEY'
+  });
+};
+
+/**
  * Middleware opcional para rutas públicas
  */
 const optionalAuth = (req, res, next) => {
@@ -137,6 +197,7 @@ const requirePermission = (requiredPermissions) => {
 module.exports = {
   apiKeyAuth,
   masterKeyAuth,
+  chatSessionAuth,
   optionalAuth,
   requirePermission
 };

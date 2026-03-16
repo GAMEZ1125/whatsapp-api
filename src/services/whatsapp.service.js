@@ -86,6 +86,8 @@ class WhatsAppService {
 
       // Mensaje recibido
       this.client.on('message', (message) => {
+        // Registrar mensaje en el sistema de chat sessions
+        this.handleIncomingMessage(message);
         this.emit('message', message);
       });
 
@@ -392,6 +394,55 @@ class WhatsAppService {
    */
   sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Maneja mensajes entrantes y los registra en el sistema de chat sessions
+   */
+  handleIncomingMessage(message) {
+    try {
+      // Importar dinámicamente para evitar dependencia circular
+      const chatSessionService = require('./chatSession.service');
+      
+      // Extraer número de teléfono
+      const phone = message.from.replace('@c.us', '').replace('@s.whatsapp.net', '');
+      
+      // Ignorar mensajes de grupos o broadcasts
+      if (message.from.includes('@g.us') || message.from.includes('@broadcast')) {
+        return;
+      }
+
+      // Registrar o actualizar el chat
+      chatSessionService.registerChat(phone, {
+        customerName: message._data?.notifyName || null
+      });
+
+      // Determinar tipo de mensaje
+      let messageType = 'text';
+      let content = message.body;
+
+      if (message.hasMedia) {
+        if (message.type === 'image') messageType = 'image';
+        else if (message.type === 'document') messageType = 'document';
+        else if (message.type === 'audio' || message.type === 'ptt') messageType = 'audio';
+        else if (message.type === 'video') messageType = 'video';
+        else messageType = 'media';
+        
+        content = message.body || `[${messageType.toUpperCase()}]`;
+      }
+
+      // Registrar el mensaje
+      chatSessionService.logMessage(phone, {
+        direction: 'incoming',
+        content: content,
+        type: messageType,
+        whatsappId: message.id._serialized
+      });
+
+      logger.debug(`📨 Mensaje entrante registrado de ${phone}`);
+    } catch (error) {
+      logger.error('Error registrando mensaje entrante:', error);
+    }
   }
 }
 

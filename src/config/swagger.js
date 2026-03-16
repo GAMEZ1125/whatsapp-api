@@ -65,6 +65,14 @@ const options = {
       {
         name: 'API Keys',
         description: 'Gestión de API Keys (crear, listar, revocar)'
+      },
+      {
+        name: 'Chat Sessions',
+        description: 'Gestión de sesiones de agentes (Admin). Crear sesiones, asignar chats, estadísticas.'
+      },
+      {
+        name: 'Chat Sessions - Agent',
+        description: 'Endpoints para agentes. Ver/tomar chats, enviar mensajes, transferir conversaciones.'
       }
     ],
     components: {
