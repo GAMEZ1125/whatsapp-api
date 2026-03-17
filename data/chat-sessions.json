@@ -19,14 +19,14 @@
     "573158749151": {
       "phone": "573158749151",
       "sessionId": "ses_daniel",
-      "status": "assigned",
+      "status": "closed",
       "priority": "normal",
       "tags": [],
       "customerName": "David Amezquita",
-      "notes": "",
+      "notes": "saxscas\n• ascascasc\n• ascascas",
       "createdAt": "2026-03-17T12:42:26.259Z",
       "assignedAt": "2026-03-17T12:42:35.411Z",
-      "closedAt": null,
+      "closedAt": "2026-03-17T16:45:59.369Z",
       "lastMessageAt": "2026-03-17T14:09:46.879Z",
       "messageCount": 37
     }
