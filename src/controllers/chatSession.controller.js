@@ -553,9 +553,64 @@ const sendMessageAsAgent = async (req, res) => {
     });
   } catch (error) {
     logger.error('Error enviando mensaje:', error);
-    res.status(500).json({
+    const isNotRegistered = error?.message?.toLowerCase().includes('no está registrado') || error?.message?.toLowerCase().includes('no lid');
+    res.status(isNotRegistered ? 400 : 500).json({
       success: false,
       error: error.message || 'Error al enviar el mensaje'
+    });
+  }
+};
+
+/**
+ * Enviar media (imagen/documento) como agente
+ */
+const sendMediaAsAgent = async (req, res) => {
+  try {
+    const { phone, fileName, mimeType, base64 } = req.body;
+    const session = req.chatSession;
+
+    if (!session) {
+      return res.status(401).json({
+        success: false,
+        error: 'Sesión no identificada'
+      });
+    }
+
+    if (!phone || !mimeType || !base64) {
+      return res.status(400).json({
+        success: false,
+        error: 'Teléfono, mimeType y base64 son requeridos'
+      });
+    }
+
+    if (!chatSessionService.hasAccessToChat(session.id, phone)) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes acceso a este chat. Primero debes tomarlo.'
+      });
+    }
+
+    const result = await whatsappService.sendMedia(phone, mimeType, base64, fileName || 'file');
+
+    chatSessionService.logMessage(phone, {
+      direction: 'outgoing',
+      content: fileName || 'media',
+      type: mimeType.startsWith('image/') ? 'image' : 'document',
+      sessionId: session.id,
+      agentName: session.agentName,
+      whatsappId: result.whatsappId
+    });
+
+    res.json({
+      success: true,
+      message: 'Media enviada',
+      data: result
+    });
+  } catch (error) {
+    logger.error('Error enviando media:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Error al enviar el media'
     });
   }
 };

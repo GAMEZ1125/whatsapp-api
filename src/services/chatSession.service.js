@@ -7,9 +7,12 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { EventEmitter } = require('events');
 const logger = require('../config/logger');
 
 const DATA_FILE = path.join(__dirname, '../../data/chat-sessions.json');
+const chatEvents = new EventEmitter();
+chatEvents.setMaxListeners(200);
 
 // Asegurar que existe el directorio data
 const dataDir = path.dirname(DATA_FILE);
@@ -85,6 +88,7 @@ const loadData = () => {
 const saveData = (data) => {
   try {
     fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+    chatEvents.emit('change', { type: 'full-sync', ts: Date.now() });
     return true;
   } catch (error) {
     logger.error('Error guardando datos de sesiones:', error);
@@ -127,6 +131,7 @@ const createSession = (options = {}) => {
   saveData(data);
 
   logger.info(`📱 Nueva sesión creada: ${session.name} (${sessionId})`);
+  chatEvents.emit('change', { type: 'session', action: 'create', sessionId, ts: Date.now() });
 
   return session;
 };
@@ -185,6 +190,7 @@ const updateSession = (sessionId, updates) => {
 
   data.sessions[sessionId].lastActivity = new Date().toISOString();
   saveData(data);
+  chatEvents.emit('change', { type: 'session', action: 'update', sessionId, ts: Date.now() });
 
   return { success: true, data: data.sessions[sessionId] };
 };
@@ -212,6 +218,7 @@ const deleteSession = (sessionId) => {
   saveData(data);
 
   logger.info(`🗑️ Sesión eliminada: ${deletedSession.name} (${sessionId})`);
+  chatEvents.emit('change', { type: 'session', action: 'delete', sessionId, ts: Date.now() });
 
   return { success: true, message: 'Sesión eliminada' };
 };
@@ -230,6 +237,7 @@ const regenerateSessionKey = (sessionId) => {
   data.sessions[sessionId].apiKey = newKey;
   data.sessions[sessionId].lastActivity = new Date().toISOString();
   saveData(data);
+  chatEvents.emit('change', { type: 'session', action: 'regen_key', sessionId, ts: Date.now() });
 
   return { success: true, apiKey: newKey };
 };
@@ -269,6 +277,7 @@ const registerChat = (phone, options = {}) => {
   }
 
   saveData(data);
+  chatEvents.emit('change', { type: 'chat', action: 'upsert', phone: cleanPhone, ts: Date.now() });
   return data.chats[cleanPhone];
 };
 
@@ -312,6 +321,7 @@ const assignChat = (phone, sessionId) => {
   saveData(data);
 
   logger.info(`🔄 Chat ${cleanPhone} ${sessionId ? `asignado a sesión ${sessionId}` : 'desasignado'}`);
+  chatEvents.emit('change', { type: 'chat', action: 'assign', phone: cleanPhone, sessionId, ts: Date.now() });
 
   return { 
     success: true, 
@@ -360,6 +370,7 @@ const transferChat = (phone, fromSessionId, toSessionId) => {
   saveData(data);
 
   logger.info(`↔️ Chat ${cleanPhone} transferido de ${fromSessionId} a ${toSessionId}`);
+  chatEvents.emit('change', { type: 'chat', action: 'transfer', phone: cleanPhone, fromSessionId, toSessionId, ts: Date.now() });
 
   return { success: true, data: data.chats[cleanPhone] };
 };
@@ -387,6 +398,7 @@ const closeChat = (phone, sessionId = null) => {
   saveData(data);
 
   logger.info(`✅ Chat cerrado: ${cleanPhone}`);
+  chatEvents.emit('change', { type: 'chat', action: 'close', phone: cleanPhone, ts: Date.now() });
 
   return { success: true, data: data.chats[cleanPhone] };
 };
@@ -408,6 +420,7 @@ const reopenChat = (phone) => {
 
   saveData(data);
 
+  chatEvents.emit('change', { type: 'chat', action: 'reopen', phone: cleanPhone, ts: Date.now() });
   return { success: true, data: data.chats[cleanPhone] };
 };
 
@@ -545,6 +558,7 @@ const logMessage = (phone, message) => {
   }
 
   saveData(data);
+  chatEvents.emit('change', { type: 'message', action: 'new', phone: cleanPhone, ts: Date.now() });
 
   return messageRecord;
 };
@@ -689,5 +703,9 @@ module.exports = {
   
   // Estadísticas
   getSessionStats,
-  getGeneralStats
+  getGeneralStats,
+
+  // Eventos
+  chatEvents
 };
+

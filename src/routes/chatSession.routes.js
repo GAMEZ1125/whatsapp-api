@@ -7,6 +7,11 @@ const express = require('express');
 const router = express.Router();
 const chatSessionController = require('../controllers/chatSession.controller');
 const { masterKeyAuth, chatSessionAuth } = require('../middlewares/auth');
+const apikeyService = require('../services/apikey.service');
+const chatSessionService = require('../services/chatSession.service');
+const userService = require('../services/user.service');
+const fs = require('fs');
+const path = require('path');
 
 /**
  * @swagger
@@ -533,6 +538,45 @@ router.get('/agent/chat/:phone/messages', chatSessionAuth, chatSessionController
  *       403:
  *         description: No tienes acceso a este chat
  */
-router.post('/agent/send', chatSessionAuth, chatSessionController.sendMessageAsAgent);
+router.post('/agent/send', chatSessionAuth, chatSessionController.sendMessageAsAgent);\nrouter.post('/agent/send-media', chatSessionAuth, chatSessionController.sendMediaAsAgent);
+
+// SSE stream para cambios en chats y mensajes (acepta apiKey por query o header)
+router.get('/events', async (req, res) => {
+  const apiKey = req.query.apiKey || req.headers['x-api-key'];
+  const masterKey = process.env.API_KEY;
+
+  const isMaster = masterKey && apiKey === masterKey;
+  const session = apiKey ? chatSessionService.getSessionByApiKey(apiKey) : null;
+  const user = apiKey ? await userService.getUserByApiKey(apiKey) : null;
+
+  if (!apiKey || (!isMaster && !session && !user && !apikeyService.validateApiKey(apiKey))) {
+    return res.status(401).end();
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+
+  const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+  send({ type: 'hello', ts: Date.now() });
+
+  const handler = (payload) => send(payload);
+  chatSessionService.chatEvents.on('change', handler);
+
+  const dataFile = path.join(__dirname, '../../data/chat-sessions.json');
+  const watcher = fs.watch(dataFile, { persistent: false }, () => send({ type: 'file-change', ts: Date.now() }));
+
+  const heartbeat = setInterval(() => send({ type: 'heartbeat', ts: Date.now() }), 15000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    watcher.close();
+    chatSessionService.chatEvents.off('change', handler);
+  });
+});
 
 module.exports = router;
+

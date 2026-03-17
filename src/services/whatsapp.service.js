@@ -85,9 +85,9 @@ class WhatsAppService {
       });
 
       // Mensaje recibido
-      this.client.on('message', (message) => {
+      this.client.on('message', async (message) => {
         // Registrar mensaje en el sistema de chat sessions
-        this.handleIncomingMessage(message);
+        await this.handleIncomingMessage(message);
         this.emit('message', message);
       });
 
@@ -168,7 +168,13 @@ class WhatsAppService {
 
     try {
       logger.info(`Enviando mensaje a ${phone}`);
-      
+
+      // Validar que el número existe en WhatsApp (evita "No LID for user")
+      const numberId = await this.client.getNumberId(formattedPhone);
+      if (!numberId) {
+        throw new Error('El número no está registrado en WhatsApp');
+      }
+
       const result = await this.client.sendMessage(formattedPhone, message, options);
       
       logger.info(`✅ Mensaje enviado: ${messageId}`);
@@ -215,6 +221,37 @@ class WhatsAppService {
       };
     } catch (error) {
       logger.error(`❌ Error al enviar imagen: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Envía un media (imagen/documento) a partir de base64
+   */
+  async sendMedia(phone, mimeType, base64Data, filename = 'file') {
+    if (!this.isReady) {
+      throw new Error('WhatsApp no está conectado');
+    }
+
+    const formattedPhone = this.formatPhoneNumber(phone);
+    const messageId = uuidv4();
+
+    try {
+      const media = new MessageMedia(mimeType, base64Data, filename);
+      const result = await this.client.sendMessage(formattedPhone, media);
+
+      logger.info(`🖼️ Media enviado: ${messageId}`);
+
+      return {
+        messageId,
+        whatsappId: result.id._serialized,
+        phone,
+        type: mimeType.startsWith('image/') ? 'image' : 'document',
+        status: 'sent',
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      logger.error(`❌ Error al enviar media: ${error.message}`);
       throw error;
     }
   }
@@ -399,22 +436,24 @@ class WhatsAppService {
   /**
    * Maneja mensajes entrantes y los registra en el sistema de chat sessions
    */
-  handleIncomingMessage(message) {
+  async handleIncomingMessage(message) {
     try {
       // Importar dinámicamente para evitar dependencia circular
       const chatSessionService = require('./chatSession.service');
-      
-      // Extraer número de teléfono
-      const phone = message.from.replace('@c.us', '').replace('@s.whatsapp.net', '');
-      
+
+      // Obtener contacto para resolver el número real (evita IDs LID)
+      const contact = await message.getContact();
+      const rawNumber = contact?.number || message.from || '';
+      const phone = rawNumber.replace(/\D/g, '');
+
       // Ignorar mensajes de grupos o broadcasts
       if (message.from.includes('@g.us') || message.from.includes('@broadcast')) {
         return;
       }
 
-      // Registrar o actualizar el chat
+      // Registrar o actualizar el chat con el número real
       chatSessionService.registerChat(phone, {
-        customerName: message._data?.notifyName || null
+        customerName: contact?.pushname || contact?.name || message._data?.notifyName || null
       });
 
       // Determinar tipo de mensaje

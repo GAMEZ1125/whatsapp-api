@@ -1,63 +1,208 @@
 {
   "sessions": {
-    "ses_agent1": {
-      "id": "ses_agent1",
-      "name": "Soporte Ventas 1",
-      "agentName": "Carlos Pérez",
-      "apiKey": "cs_mockkey1",
-      "status": "active",
-      "maxChats": 10,
-      "permissions": [
-        "*"
-      ],
-      "createdAt": "2026-03-17T00:00:00Z",
-      "lastActivity": "2026-03-17T04:00:00Z"
-    },
-    "ses_agent2": {
-      "id": "ses_agent2",
-      "name": "Soporte Técnico 1",
-      "agentName": "Ana Martínez",
-      "apiKey": "cs_mockkey2",
+    "ses_daniel": {
+      "id": "ses_daniel",
+      "name": "Soporte Ventas",
+      "agentName": "Daniel Vargas",
+      "apiKey": "rp_user_92d4a1",
       "status": "active",
       "maxChats": 5,
       "permissions": [
         "*"
       ],
-      "createdAt": "2026-03-17T00:00:00Z",
-      "lastActivity": "2026-03-17T10:56:22.197Z"
+      "createdAt": "2026-03-17T00:00:00.000Z",
+      "lastActivity": "2026-03-17T12:42:35.411Z",
+      "assignedChats": 0
     }
   },
   "chats": {
-    "573001234567": {
-      "phone": "573001234567",
-      "sessionId": "ses_agent2",
-      "status": "assigned",
-      "priority": "high",
-      "tags": [
-        "cliente_frecuente"
-      ],
-      "customerName": "Juan Valbuena",
-      "notes": "",
-      "createdAt": "2026-03-17T04:10:00Z",
-      "assignedAt": "2026-03-17T10:56:22.197Z",
-      "closedAt": null,
-      "lastMessageAt": "2026-03-17T04:15:00Z",
-      "messageCount": 5
-    },
-    "573119876543": {
-      "phone": "573119876543",
-      "sessionId": "ses_agent1",
+    "573158749151": {
+      "phone": "573158749151",
+      "sessionId": "ses_daniel",
       "status": "assigned",
       "priority": "normal",
       "tags": [],
-      "customerName": "Maria Gomez",
+      "customerName": "David Amezquita",
       "notes": "",
-      "createdAt": "2026-03-17T04:05:00Z",
-      "assignedAt": "2026-03-17T04:06:00Z",
+      "createdAt": "2026-03-17T12:42:26.259Z",
+      "assignedAt": "2026-03-17T12:42:35.411Z",
       "closedAt": null,
-      "lastMessageAt": "2026-03-17T04:12:00Z",
-      "messageCount": 12
+      "lastMessageAt": "2026-03-17T13:18:05.799Z",
+      "messageCount": 26
     }
   },
-  "messages": {}
+  "messages": {
+    "573158749151": [
+      {
+        "id": "9ea9197c-e84e-4ca1-8941-1826c6e8f039",
+        "direction": "incoming",
+        "content": "Hola",
+        "type": "text",
+        "timestamp": "2026-03-17T12:42:26.263Z",
+        "sessionId": null,
+        "agentName": null,
+        "whatsappId": "false_197139116367993@lid_ACF0D8219A7542FE4F091D5AC4298036"
+      },
+      {
+        "id": "286e53f2-ae82-4f90-b10d-6a94e95817dc",
+        "direction": "outgoing",
+        "content": "Hola",
+        "type": "text",
+        "timestamp": "2026-03-17T12:42:50.187Z",
+        "sessionId": "ses_daniel",
+        "agentName": "Daniel Vargas",
+        "whatsappId": "true_197139116367993@lid_3EB0123F33447CC644AD9F"
+      },
+      {
+        "id": "366bf241-e386-45d0-815e-169be8ab7546",
+        "direction": "incoming",
+        "content": "Bien y tú?",
+        "type": "text",
+        "timestamp": "2026-03-17T12:43:40.743Z",
+        "sessionId": null,
+        "agentName": null,
+        "whatsappId": "false_197139116367993@lid_AC399C78B864D057783E0627972BE174"
+      },
+      {
+        "id": "0ed4154c-0147-4fb5-ba18-41c4900c4583",
+        "direction": "outgoing",
+        "content": "Muy Bien gracias",
+        "type": "text",
+        "timestamp": "2026-03-17T12:47:49.714Z",
+        "sessionId": "ses_daniel",
+        "agentName": "Daniel Vargas",
+        "whatsappId": "true_197139116367993@lid_3EB03E64FD64F524988F79"
+      },
+      {
+        "id": "f5fcf691-699b-4871-b20a-a050c0d0a3df",
+        "direction": "incoming",
+        "content": "Necesito saber de un viaje",
+        "type": "text",
+        "timestamp": "2026-03-17T12:48:58.801Z",
+        "sessionId": null,
+        "agentName": null,
+        "whatsappId": "false_197139116367993@lid_ACC5F2AFFF2A8CC33146379EE5211AFA"
+      },
+      {
+        "id": "a4605934-fe7b-4703-8e38-3c9ea9cffbdf",
+        "direction": "outgoing",
+        "content": "Cual te gustaría?",
+        "type": "text",
+        "timestamp": "2026-03-17T12:51:21.861Z",
+        "sessionId": "ses_daniel",
+        "agentName": "Daniel Vargas",
+        "whatsappId": "true_197139116367993@lid_3EB024AE802A63A4A9B34C"
+      },
+      {
+        "id": "0decc4a2-cbd4-4e6d-92bf-35908b21b69e",
+        "direction": "incoming",
+        "content": "París",
+        "type": "text",
+        "timestamp": "2026-03-17T12:52:01.976Z",
+        "sessionId": null,
+        "agentName": null,
+        "whatsappId": "false_197139116367993@lid_AC5399C6E77C656D81D4F71DFBCC4842"
+      },
+      {
+        "id": "6c09d104-eaf0-4a9d-b17d-ffc78650494b",
+        "direction": "outgoing",
+        "content": "Cuanto dinero tienes",
+        "type": "text",
+        "timestamp": "2026-03-17T13:13:43.820Z",
+        "sessionId": "ses_daniel",
+        "agentName": "Daniel Vargas",
+        "whatsappId": "true_197139116367993@lid_3EB0653F4B87166E6059A0"
+      },
+      {
+        "id": "d8b06782-5f1d-4ba4-9292-92a1939060c2",
+        "direction": "incoming",
+        "content": "10 millones",
+        "type": "text",
+        "timestamp": "2026-03-17T13:13:57.441Z",
+        "sessionId": null,
+        "agentName": null,
+        "whatsappId": "false_197139116367993@lid_ACC6D66180A07E22D4B900EA27A5AC86"
+      },
+      {
+        "id": "8450337c-0d94-4aee-bca1-f9823c1f20bd",
+        "direction": "outgoing",
+        "content": "Super",
+        "type": "text",
+        "timestamp": "2026-03-17T13:14:22.819Z",
+        "sessionId": "ses_daniel",
+        "agentName": "Daniel Vargas",
+        "whatsappId": "true_197139116367993@lid_3EB0C9E2EC1D64763BC035"
+      },
+      {
+        "id": "573104d5-b918-417d-933c-a56fd6798d5d",
+        "direction": "incoming",
+        "content": "Para 2 personas",
+        "type": "text",
+        "timestamp": "2026-03-17T13:14:36.391Z",
+        "sessionId": null,
+        "agentName": null,
+        "whatsappId": "false_197139116367993@lid_ACBD5E1C5D4E62C2D365530D18138892"
+      },
+      {
+        "id": "f0acb99b-1cb1-4353-807a-67db16e18af9",
+        "direction": "outgoing",
+        "content": "5 Millones cada 1",
+        "type": "text",
+        "timestamp": "2026-03-17T13:16:39.834Z",
+        "sessionId": "ses_daniel",
+        "agentName": "Daniel Vargas",
+        "whatsappId": "true_197139116367993@lid_3EB05268CFD8D333D5A7AF"
+      },
+      {
+        "id": "65203cdc-36db-4154-a31f-2e0e85bb9132",
+        "direction": "incoming",
+        "content": "Ah ok",
+        "type": "text",
+        "timestamp": "2026-03-17T13:16:48.003Z",
+        "sessionId": null,
+        "agentName": null,
+        "whatsappId": "false_197139116367993@lid_AC5692608CC445EBBE46DEC428C955D3"
+      },
+      {
+        "id": "feb4d46c-5573-4580-8a51-b2ea1bf7b039",
+        "direction": "incoming",
+        "content": "Lo compreo",
+        "type": "text",
+        "timestamp": "2026-03-17T13:16:53.972Z",
+        "sessionId": null,
+        "agentName": null,
+        "whatsappId": "false_197139116367993@lid_AC01E7457ACE20B35129468EAF7F9600"
+      },
+      {
+        "id": "da0ef4d6-9889-4c6d-b0d3-e3ae7052e1c2",
+        "direction": "outgoing",
+        "content": "Super",
+        "type": "text",
+        "timestamp": "2026-03-17T13:17:38.395Z",
+        "sessionId": "ses_daniel",
+        "agentName": "Daniel Vargas",
+        "whatsappId": "true_197139116367993@lid_3EB06F76E6B96F8199D9EB"
+      },
+      {
+        "id": "8c273d18-2340-4830-a7cb-4b33e8dd11ef",
+        "direction": "outgoing",
+        "content": "Este es el link",
+        "type": "text",
+        "timestamp": "2026-03-17T13:17:49.826Z",
+        "sessionId": "ses_daniel",
+        "agentName": "Daniel Vargas",
+        "whatsappId": "true_197139116367993@lid_3EB0F982CE716B87E20712"
+      },
+      {
+        "id": "9d8d8e54-f0ae-4cd0-b248-f74c25c077ea",
+        "direction": "incoming",
+        "content": "[IMAGE]",
+        "type": "image",
+        "timestamp": "2026-03-17T13:18:05.799Z",
+        "sessionId": null,
+        "agentName": null,
+        "whatsappId": "false_197139116367993@lid_ACCEEE6D58E152368046E62D0E4903B2"
+      }
+    ]
+  }
 }
