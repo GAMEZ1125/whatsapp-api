@@ -17,11 +17,13 @@ const logger = require('./config/logger');
 const swaggerSetup = require('./config/swagger');
 const whatsappService = require('./services/whatsapp.service');
 const userService = require('./services/user.service');
+const chatSessionService = require('./services/chatSession.service');
 const routes = require('./routes');
 const errorHandler = require('./middlewares/errorHandler');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+let autoChatTimer = null;
 
 // Middlewares de seguridad
 // Configuración de Helmet menos restrictiva para HTTP
@@ -42,6 +44,7 @@ app.use(cors({
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
+  skip: (req) => req.path === '/api/chat-sessions/events',
   message: {
     success: false,
     error: 'Demasiadas solicitudes, por favor intenta más tarde'
@@ -87,6 +90,13 @@ const startServer = async () => {
     logger.info('Iniciando servicio de WhatsApp...');
     await whatsappService.initialize();
     await userService.initialize();
+    autoChatTimer = setInterval(async () => {
+      try {
+        await chatSessionService.runAutoChatRules((phone, message) => whatsappService.sendMessage(phone, message));
+      } catch (automationError) {
+        logger.error('Error ejecutando automatizaciones de chat:', automationError);
+      }
+    }, 60 * 1000);
 
     app.listen(PORT, () => {
       logger.info(`🚀 Servidor corriendo en http://localhost:${PORT}`);
@@ -101,12 +111,14 @@ const startServer = async () => {
 // Manejo de señales de cierre
 process.on('SIGINT', async () => {
   logger.info('Cerrando servidor...');
+  if (autoChatTimer) clearInterval(autoChatTimer);
   await whatsappService.destroy();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
   logger.info('Cerrando servidor...');
+  if (autoChatTimer) clearInterval(autoChatTimer);
   await whatsappService.destroy();
   process.exit(0);
 });

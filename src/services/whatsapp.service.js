@@ -239,7 +239,7 @@ class WhatsAppService {
   /**
    * Envía un media (imagen/documento) a partir de base64
    */
-  async sendMedia(phone, mimeType, base64Data, filename = 'file') {
+  async sendMedia(phone, mimeType, base64Data, filename = 'file', options = {}) {
     if (!this.isReady) {
       throw new Error('WhatsApp no está conectado');
     }
@@ -249,7 +249,9 @@ class WhatsAppService {
 
     try {
       const media = new MessageMedia(mimeType, base64Data, filename);
-      const result = await this.client.sendMessage(formattedPhone, media);
+      const result = await this.client.sendMessage(formattedPhone, media, {
+        sendMediaAsSticker: options.asSticker === true,
+      });
 
       logger.info(`🖼️ Media enviado: ${messageId}`);
 
@@ -257,7 +259,7 @@ class WhatsAppService {
         messageId,
         whatsappId: result.id._serialized,
         phone,
-        type: mimeType.startsWith('image/') ? 'image' : 'document',
+        type: options.asSticker ? 'sticker' : mimeType.startsWith('image/') ? 'image' : 'document',
         status: 'sent',
         timestamp: new Date().toISOString()
       };
@@ -473,6 +475,7 @@ class WhatsAppService {
 
       if (message.hasMedia) {
         if (message.type === 'image') messageType = 'image';
+        else if (message.type === 'sticker') messageType = 'sticker';
         else if (message.type === 'document') messageType = 'document';
         else if (message.type === 'audio' || message.type === 'ptt') messageType = 'audio';
         else if (message.type === 'video') messageType = 'video';

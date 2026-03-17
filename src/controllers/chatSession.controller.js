@@ -567,7 +567,7 @@ const sendMessageAsAgent = async (req, res) => {
  */
 const sendMediaAsAgent = async (req, res) => {
   try {
-    const { phone, fileName, mimeType, base64 } = req.body;
+    const { phone, fileName, mimeType, base64, asSticker } = req.body;
     const session = req.chatSession;
 
     if (!session) {
@@ -591,7 +591,9 @@ const sendMediaAsAgent = async (req, res) => {
       });
     }
 
-    const result = await whatsappService.sendMedia(phone, mimeType, base64, fileName || 'file');
+    const result = await whatsappService.sendMedia(phone, mimeType, base64, fileName || 'file', {
+      asSticker: asSticker === true,
+    });
 
     const contentForUI = mimeType.startsWith('image/')
       ? `data:${mimeType};base64,${base64}`
@@ -600,7 +602,7 @@ const sendMediaAsAgent = async (req, res) => {
     chatSessionService.logMessage(phone, {
       direction: 'outgoing',
       content: contentForUI,
-      type: mimeType.startsWith('image/') ? 'image' : 'document',
+      type: asSticker ? 'sticker' : mimeType.startsWith('image/') ? 'image' : 'document',
       sessionId: session.id,
       agentName: session.agentName,
       whatsappId: result.whatsappId,
@@ -653,6 +655,127 @@ const getStats = async (req, res) => {
   }
 };
 
+const getQuickReplies = async (_req, res) => {
+  try {
+    const quickReplies = chatSessionService.getQuickReplies();
+    res.json({
+      success: true,
+      data: quickReplies,
+    });
+  } catch (error) {
+    logger.error('Error obteniendo mensajes rápidos:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener mensajes rápidos'
+    });
+  }
+};
+
+const updateQuickReplies = async (req, res) => {
+  try {
+    const quickReplies = chatSessionService.updateQuickReplies(req.body?.quickReplies || []);
+    res.json({
+      success: true,
+      message: 'Mensajes rápidos actualizados',
+      data: quickReplies,
+    });
+  } catch (error) {
+    logger.error('Error actualizando mensajes rápidos:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error al actualizar mensajes rápidos'
+    });
+  }
+};
+
+const getAutoChatRules = async (_req, res) => {
+  try {
+    const autoChatRules = chatSessionService.getAutoChatRules();
+    res.json({
+      success: true,
+      data: autoChatRules,
+    });
+  } catch (error) {
+    logger.error('Error obteniendo reglas automáticas:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener reglas automáticas'
+    });
+  }
+};
+
+const updateAutoChatRules = async (req, res) => {
+  try {
+    const autoChatRules = chatSessionService.updateAutoChatRules(req.body || {});
+    res.json({
+      success: true,
+      message: 'Automatización actualizada',
+      data: autoChatRules,
+    });
+  } catch (error) {
+    logger.error('Error actualizando reglas automáticas:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error al actualizar reglas automáticas'
+    });
+  }
+};
+
+const getStickerPacks = async (_req, res) => {
+  try {
+    const stickerPacks = chatSessionService.getStickerPacks();
+    res.json({
+      success: true,
+      data: stickerPacks,
+    });
+  } catch (error) {
+    logger.error('Error obteniendo stickers:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener stickers'
+    });
+  }
+};
+
+const updateStickerPacks = async (req, res) => {
+  try {
+    const stickerPacks = chatSessionService.updateStickerPacks(req.body?.stickerPacks || []);
+    res.json({
+      success: true,
+      message: 'Stickers actualizados',
+      data: stickerPacks,
+    });
+  } catch (error) {
+    logger.error('Error actualizando stickers:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error al actualizar stickers'
+    });
+  }
+};
+
+const importStickerPackage = async (req, res) => {
+  try {
+    const stickerPack = await chatSessionService.importStickerPackage({
+      fileName: req.body?.fileName,
+      base64: req.body?.base64,
+      packName: req.body?.packName,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Paquete de stickers importado',
+      data: stickerPack,
+    });
+  } catch (error) {
+    logger.error('Error importando paquete de stickers:', error);
+    res.status(400).json({
+      success: false,
+      error: error.message || 'Error al importar paquete de stickers'
+    });
+  }
+};
+
 module.exports = {
   // Sesiones
   createSession,
@@ -679,7 +802,14 @@ module.exports = {
   sendMediaAsAgent,
 
   // Stats
-  getStats
+  getStats,
+  getQuickReplies,
+  updateQuickReplies,
+  getAutoChatRules,
+  updateAutoChatRules,
+  getStickerPacks,
+  updateStickerPacks,
+  importStickerPackage
 };
 
 

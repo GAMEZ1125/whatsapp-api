@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
+const unzipper = require('unzipper');
 const logger = require('../config/logger');
 
 const DATA_FILE = path.join(__dirname, '../../data/chat-sessions.json');
@@ -70,16 +71,171 @@ if (!fs.existsSync(dataDir)) {
 /**
  * Cargar datos desde archivo
  */
+const normalizePhone = (phone = '') => String(phone).replace(/\D/g, '');
+
+const generateChatId = () => `chat_${crypto.randomUUID().split('-')[0]}`;
+
+const DEFAULT_QUICK_REPLIES = [
+  {
+    id: 'welcome',
+    title: 'Bienvenida',
+    content: 'Hola [NOMBRE CLIENTE], Soy [NOMBRE DEL AGENTE] En que Te puedo ayudar',
+    active: true,
+  },
+];
+
+const DEFAULT_AUTO_CHAT_RULES = {
+  enabled: false,
+  reminderEnabled: true,
+  reminderDelayMinutes: 5,
+  reminderMessage: 'Hola [NOMBRE CLIENTE], ¿sigues en el chat? Estoy atento para ayudarte.',
+  autoCloseEnabled: true,
+  autoCloseDelayMinutes: 5,
+  autoCloseMessage: 'Hola [NOMBRE CLIENTE], cerraré este chat por inactividad. Si nos escribes de nuevo, abriremos una nueva conversación.',
+  automationAgentName: 'Sistema',
+};
+
+const sanitizeAutoChatRules = (rules = {}) => ({
+  enabled: rules?.enabled === true,
+  reminderEnabled: rules?.reminderEnabled !== false,
+  reminderDelayMinutes: Math.max(1, Number(rules?.reminderDelayMinutes || DEFAULT_AUTO_CHAT_RULES.reminderDelayMinutes)),
+  reminderMessage: String(rules?.reminderMessage || DEFAULT_AUTO_CHAT_RULES.reminderMessage).trim() || DEFAULT_AUTO_CHAT_RULES.reminderMessage,
+  autoCloseEnabled: rules?.autoCloseEnabled !== false,
+  autoCloseDelayMinutes: Math.max(1, Number(rules?.autoCloseDelayMinutes || DEFAULT_AUTO_CHAT_RULES.autoCloseDelayMinutes)),
+  autoCloseMessage: String(rules?.autoCloseMessage || DEFAULT_AUTO_CHAT_RULES.autoCloseMessage).trim() || DEFAULT_AUTO_CHAT_RULES.autoCloseMessage,
+  automationAgentName: String(rules?.automationAgentName || DEFAULT_AUTO_CHAT_RULES.automationAgentName).trim() || DEFAULT_AUTO_CHAT_RULES.automationAgentName,
+});
+
+const normalizeStickerMimeType = (name = '') => {
+  const lower = String(name).toLowerCase();
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  return 'application/octet-stream';
+};
+
+const createDataUrl = (mimeType, base64) => `data:${mimeType};base64,${base64}`;
+
+const sanitizeSticker = (sticker, index = 0) => {
+  const mimeType = String(sticker?.mimeType || '').trim() || 'image/webp';
+  const base64 = String(sticker?.base64 || '').trim();
+  const content = String(sticker?.content || '').trim() || (base64 ? createDataUrl(mimeType, base64) : '');
+
+  if (!content && !base64) return null;
+
+  return {
+    id: sticker?.id || `st_${crypto.randomUUID().split('-')[0]}`,
+    name: String(sticker?.name || `Sticker ${index + 1}`).trim() || `Sticker ${index + 1}`,
+    mimeType,
+    base64: base64 || content.split(',')[1] || '',
+    content: content || createDataUrl(mimeType, base64),
+    active: sticker?.active !== false,
+  };
+};
+
+const sanitizeStickerPack = (pack, index = 0) => {
+  const stickers = Array.isArray(pack?.stickers)
+    ? pack.stickers
+        .map((sticker, stickerIndex) => sanitizeSticker(sticker, stickerIndex))
+        .filter(Boolean)
+    : [];
+
+  if (!stickers.length) return null;
+
+  return {
+    id: pack?.id || `pack_${crypto.randomUUID().split('-')[0]}`,
+    name: String(pack?.name || `Paquete ${index + 1}`).trim() || `Paquete ${index + 1}`,
+    description: String(pack?.description || '').trim(),
+    active: pack?.active !== false,
+    sourceType: pack?.sourceType === 'package' ? 'package' : 'manual',
+    importedAt: pack?.importedAt || new Date().toISOString(),
+    stickers,
+  };
+};
+
+const normalizePersistedData = (rawData = {}) => {
+  const normalized = {
+    sessions: rawData.sessions || {},
+    chats: {},
+    messages: {},
+    quickReplies:
+      Array.isArray(rawData.quickReplies) && rawData.quickReplies.length
+        ? rawData.quickReplies.map((reply) => ({
+            id: reply.id || `qr_${crypto.randomUUID().split('-')[0]}`,
+            title: String(reply.title || '').trim(),
+            content: String(reply.content || '').trim(),
+            active: reply.active !== false,
+          }))
+        : DEFAULT_QUICK_REPLIES,
+    autoChatRules: sanitizeAutoChatRules(rawData.autoChatRules),
+    stickerPacks: Array.isArray(rawData.stickerPacks)
+      ? rawData.stickerPacks
+          .map((pack, index) => sanitizeStickerPack(pack, index))
+          .filter(Boolean)
+      : [],
+  };
+
+  for (const [rawKey, rawChat] of Object.entries(rawData.chats || {})) {
+    if (!rawChat) continue;
+
+    const createdAt = rawChat.createdAt || new Date().toISOString();
+    const cleanPhone = normalizePhone(rawChat.phone || rawKey);
+    const chatId =
+      rawChat.id ||
+      (rawKey.startsWith('chat_') ? rawKey : `chat_${cleanPhone}_${Date.parse(createdAt) || Date.now()}`);
+
+    normalized.chats[chatId] = {
+      id: chatId,
+      phone: cleanPhone,
+      sessionId: rawChat.sessionId || null,
+      status: rawChat.status || 'pending',
+      priority: rawChat.priority || 'normal',
+      tags: Array.isArray(rawChat.tags) ? rawChat.tags : [],
+      customerName: rawChat.customerName || null,
+      notes: rawChat.notes || '',
+      createdAt,
+      assignedAt: rawChat.assignedAt || null,
+      closedAt: rawChat.closedAt || null,
+      lastMessageAt: rawChat.lastMessageAt || createdAt,
+      messageCount: Number(rawChat.messageCount || 0),
+      unreadCount: Number(rawChat.unreadCount || 0),
+      automation: {
+        lastAgentMessageAt: rawChat.automation?.lastAgentMessageAt || null,
+        reminderSentAt: rawChat.automation?.reminderSentAt || null,
+        autoClosedAt: rawChat.automation?.autoClosedAt || null,
+      },
+    };
+
+    const sourceMessages = rawData.messages?.[chatId] ?? rawData.messages?.[rawKey] ?? [];
+    normalized.messages[chatId] = Array.isArray(sourceMessages)
+      ? sourceMessages.map((message) => ({
+          ...message,
+          chatId,
+        }))
+      : [];
+  }
+
+  return normalized;
+};
+
 const loadData = () => {
   try {
     if (fs.existsSync(DATA_FILE)) {
       const data = fs.readFileSync(DATA_FILE, 'utf8');
-      return JSON.parse(data);
+      return normalizePersistedData(JSON.parse(data));
     }
   } catch (error) {
     logger.error('Error cargando datos de sesiones:', error);
   }
-  return { sessions: {}, chats: {}, messages: {} };
+  return {
+    sessions: {},
+    chats: {},
+    messages: {},
+    quickReplies: DEFAULT_QUICK_REPLIES,
+    autoChatRules: DEFAULT_AUTO_CHAT_RULES,
+    stickerPacks: [],
+  };
 };
 
 /**
@@ -101,6 +257,62 @@ const saveData = (data) => {
  */
 const generateSessionKey = () => {
   return `cs_${crypto.randomBytes(16).toString('hex')}`;
+};
+
+const getChatsByPhone = (data, phone) => {
+  const cleanPhone = normalizePhone(phone);
+  return Object.values(data.chats)
+    .filter((chat) => chat.phone === cleanPhone)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+};
+
+const getLatestChatByPhone = (data, phone, { includeClosed = true } = {}) => {
+  const matches = getChatsByPhone(data, phone).filter((chat) => includeClosed || chat.status !== 'closed');
+  return matches[0] || null;
+};
+
+const resolveChat = (data, chatRef, { includeClosed = true } = {}) => {
+  if (!chatRef) return null;
+  if (data.chats[chatRef]) {
+    const exactChat = data.chats[chatRef];
+    if (!includeClosed && exactChat.status === 'closed') return null;
+    return exactChat;
+  }
+
+  const latestChat = getLatestChatByPhone(data, chatRef, { includeClosed });
+  return latestChat || null;
+};
+
+const createChatRecord = (data, phone, options = {}, previousChat = null) => {
+  const cleanPhone = normalizePhone(phone);
+  const chatId = generateChatId();
+  const createdAt = new Date().toISOString();
+
+  data.chats[chatId] = {
+    id: chatId,
+    phone: cleanPhone,
+    sessionId: null,
+    status: 'pending',
+    priority: options.priority || previousChat?.priority || 'normal',
+    tags: Array.isArray(options.tags) ? options.tags : [],
+    customerName: options.customerName || previousChat?.customerName || null,
+    notes: '',
+    createdAt,
+    assignedAt: null,
+    closedAt: null,
+    lastMessageAt: createdAt,
+    messageCount: 0,
+    unreadCount: 0,
+    automation: {
+      lastAgentMessageAt: null,
+      reminderSentAt: null,
+      autoClosedAt: null,
+    },
+  };
+
+  data.messages[chatId] = data.messages[chatId] || [];
+  logger.info(`💬 Nuevo chat registrado: ${cleanPhone} (${chatId})`);
+  return data.chats[chatId];
 };
 
 // ==================== GESTIÓN DE SESIONES ====================
@@ -249,47 +461,36 @@ const regenerateSessionKey = (sessionId) => {
  */
 const registerChat = (phone, options = {}) => {
   const data = loadData();
-  
-  const cleanPhone = phone.replace(/\D/g, '');
-  
-  if (data.chats[cleanPhone]) {
-    // Actualizar último mensaje
-    data.chats[cleanPhone].lastMessageAt = new Date().toISOString();
-    data.chats[cleanPhone].messageCount = (data.chats[cleanPhone].messageCount || 0) + 1;
-  } else {
-    // Crear nuevo chat
-    data.chats[cleanPhone] = {
-      phone: cleanPhone,
-      sessionId: null,
-      status: 'pending',
-      priority: options.priority || 'normal',
-      tags: options.tags || [],
-      customerName: options.customerName || null,
-      notes: '',
-      createdAt: new Date().toISOString(),
-      assignedAt: null,
-      closedAt: null,
-      lastMessageAt: new Date().toISOString(),
-      messageCount: 1
-    };
-    
-    logger.info(`💬 Nuevo chat registrado: ${cleanPhone}`);
+  const cleanPhone = normalizePhone(phone);
+  const latestChat = getLatestChatByPhone(data, cleanPhone, { includeClosed: true });
+  const chat = !latestChat || latestChat.status === 'closed'
+    ? createChatRecord(data, cleanPhone, options, latestChat)
+    : latestChat;
+
+  chat.lastMessageAt = new Date().toISOString();
+  if (options.customerName && !chat.customerName) {
+    chat.customerName = options.customerName;
   }
 
   saveData(data);
-  chatEvents.emit('change', { type: 'chat', action: 'upsert', phone: cleanPhone, ts: Date.now() });
-  return data.chats[cleanPhone];
+  chatEvents.emit('change', {
+    type: 'chat',
+    action: latestChat ? 'upsert' : 'create',
+    phone: cleanPhone,
+    chatId: chat.id,
+    ts: Date.now(),
+  });
+  return chat;
 };
 
 /**
  * Asignar chat a una sesión
  */
-const assignChat = (phone, sessionId) => {
+const assignChat = (chatRef, sessionId) => {
   const data = loadData();
-  
-  const cleanPhone = phone.replace(/\D/g, '');
-  
-  if (!data.chats[cleanPhone]) {
+  const chat = resolveChat(data, chatRef, { includeClosed: false });
+
+  if (!chat) {
     return { success: false, error: 'Chat no encontrado' };
   }
 
@@ -308,11 +509,12 @@ const assignChat = (phone, sessionId) => {
     }
   }
 
-  const previousSession = data.chats[cleanPhone].sessionId;
+  const previousSession = chat.sessionId;
   
-  data.chats[cleanPhone].sessionId = sessionId;
-  data.chats[cleanPhone].status = sessionId ? 'assigned' : 'pending';
-  data.chats[cleanPhone].assignedAt = sessionId ? new Date().toISOString() : null;
+  chat.sessionId = sessionId;
+  chat.status = sessionId ? 'assigned' : 'pending';
+  chat.assignedAt = sessionId ? new Date().toISOString() : null;
+  chat.closedAt = null;
 
   if (sessionId) {
     data.sessions[sessionId].lastActivity = new Date().toISOString();
@@ -320,12 +522,12 @@ const assignChat = (phone, sessionId) => {
 
   saveData(data);
 
-  logger.info(`🔄 Chat ${cleanPhone} ${sessionId ? `asignado a sesión ${sessionId}` : 'desasignado'}`);
-  chatEvents.emit('change', { type: 'chat', action: 'assign', phone: cleanPhone, sessionId, ts: Date.now() });
+  logger.info(`🔄 Chat ${chat.phone} (${chat.id}) ${sessionId ? `asignado a sesión ${sessionId}` : 'desasignado'}`);
+  chatEvents.emit('change', { type: 'chat', action: 'assign', phone: chat.phone, chatId: chat.id, sessionId, ts: Date.now() });
 
   return { 
     success: true, 
-    data: data.chats[cleanPhone],
+    data: chat,
     previousSession
   };
 };
@@ -333,16 +535,15 @@ const assignChat = (phone, sessionId) => {
 /**
  * Transferir chat a otra sesión
  */
-const transferChat = (phone, fromSessionId, toSessionId) => {
+const transferChat = (chatRef, fromSessionId, toSessionId) => {
   const data = loadData();
-  
-  const cleanPhone = phone.replace(/\D/g, '');
-  
-  if (!data.chats[cleanPhone]) {
+  const chat = resolveChat(data, chatRef, { includeClosed: false });
+
+  if (!chat) {
     return { success: false, error: 'Chat no encontrado' };
   }
 
-  if (data.chats[cleanPhone].sessionId !== fromSessionId) {
+  if (chat.sessionId !== fromSessionId) {
     return { success: false, error: 'El chat no está asignado a la sesión de origen' };
   }
 
@@ -359,69 +560,67 @@ const transferChat = (phone, fromSessionId, toSessionId) => {
     return { success: false, error: 'La sesión destino ha alcanzado el límite de chats' };
   }
 
-  data.chats[cleanPhone].sessionId = toSessionId;
-  data.chats[cleanPhone].assignedAt = new Date().toISOString();
+  chat.sessionId = toSessionId;
+  chat.assignedAt = new Date().toISOString();
   
   // Registrar transferencia en notas
   const fromName = data.sessions[fromSessionId]?.agentName || 'Desconocido';
   const toName = data.sessions[toSessionId].agentName;
-  data.chats[cleanPhone].notes += `\n[${new Date().toISOString()}] Transferido de ${fromName} a ${toName}`;
+  chat.notes += `\n[${new Date().toISOString()}] Transferido de ${fromName} a ${toName}`;
 
   saveData(data);
 
-  logger.info(`↔️ Chat ${cleanPhone} transferido de ${fromSessionId} a ${toSessionId}`);
-  chatEvents.emit('change', { type: 'chat', action: 'transfer', phone: cleanPhone, fromSessionId, toSessionId, ts: Date.now() });
+  logger.info(`↔️ Chat ${chat.phone} (${chat.id}) transferido de ${fromSessionId} a ${toSessionId}`);
+  chatEvents.emit('change', { type: 'chat', action: 'transfer', phone: chat.phone, chatId: chat.id, fromSessionId, toSessionId, ts: Date.now() });
 
-  return { success: true, data: data.chats[cleanPhone] };
+  return { success: true, data: chat };
 };
 
 /**
  * Cerrar un chat
  */
-const closeChat = (phone, sessionId = null) => {
+const closeChat = (chatRef, sessionId = null) => {
   const data = loadData();
-  
-  const cleanPhone = phone.replace(/\D/g, '');
-  
-  if (!data.chats[cleanPhone]) {
+  const chat = resolveChat(data, chatRef, { includeClosed: true });
+
+  if (!chat) {
     return { success: false, error: 'Chat no encontrado' };
   }
 
   // Verificar que la sesión tiene permiso para cerrar este chat
-  if (sessionId && data.chats[cleanPhone].sessionId !== sessionId) {
+  if (sessionId && chat.sessionId !== sessionId) {
     return { success: false, error: 'No tienes permiso para cerrar este chat' };
   }
 
-  data.chats[cleanPhone].status = 'closed';
-  data.chats[cleanPhone].closedAt = new Date().toISOString();
+  chat.status = 'closed';
+  chat.closedAt = new Date().toISOString();
 
   saveData(data);
 
-  logger.info(`✅ Chat cerrado: ${cleanPhone}`);
-  chatEvents.emit('change', { type: 'chat', action: 'close', phone: cleanPhone, ts: Date.now() });
+  logger.info(`✅ Chat cerrado: ${chat.phone} (${chat.id})`);
+  chatEvents.emit('change', { type: 'chat', action: 'close', phone: chat.phone, chatId: chat.id, ts: Date.now() });
 
-  return { success: true, data: data.chats[cleanPhone] };
+  return { success: true, data: chat };
 };
 
 /**
  * Reabrir un chat
  */
-const reopenChat = (phone) => {
+const reopenChat = (chatRef) => {
   const data = loadData();
-  
-  const cleanPhone = phone.replace(/\D/g, '');
-  
-  if (!data.chats[cleanPhone]) {
+  const chat = resolveChat(data, chatRef, { includeClosed: true });
+
+  if (!chat) {
     return { success: false, error: 'Chat no encontrado' };
   }
 
-  data.chats[cleanPhone].status = data.chats[cleanPhone].sessionId ? 'assigned' : 'pending';
-  data.chats[cleanPhone].closedAt = null;
+  chat.status = chat.sessionId ? 'assigned' : 'pending';
+  chat.closedAt = null;
 
   saveData(data);
 
-  chatEvents.emit('change', { type: 'chat', action: 'reopen', phone: cleanPhone, ts: Date.now() });
-  return { success: true, data: data.chats[cleanPhone] };
+  chatEvents.emit('change', { type: 'chat', action: 'reopen', phone: chat.phone, chatId: chat.id, ts: Date.now() });
+  return { success: true, data: chat };
 };
 
 /**
@@ -490,19 +689,17 @@ const getAllChats = (filters = {}) => {
  */
 const getChatInfo = (phone) => {
   const data = loadData();
-  const cleanPhone = phone.replace(/\D/g, '');
-  return data.chats[cleanPhone] || null;
+  return resolveChat(data, phone, { includeClosed: true });
 };
 
 /**
  * Actualizar información de un chat
  */
-const updateChat = (phone, updates) => {
+const updateChat = (chatRef, updates) => {
   const data = loadData();
-  
-  const cleanPhone = phone.replace(/\D/g, '');
-  
-  if (!data.chats[cleanPhone]) {
+  const chat = resolveChat(data, chatRef, { includeClosed: true });
+
+  if (!chat) {
     return { success: false, error: 'Chat no encontrado' };
   }
 
@@ -510,13 +707,67 @@ const updateChat = (phone, updates) => {
   
   for (const field of allowedUpdates) {
     if (updates[field] !== undefined) {
-      data.chats[cleanPhone][field] = updates[field];
+      chat[field] = updates[field];
     }
   }
 
   saveData(data);
 
-  return { success: true, data: data.chats[cleanPhone] };
+  return { success: true, data: chat };
+};
+
+const appendMessageToChat = (data, chat, message) => {
+  if (!data.messages[chat.id]) {
+    data.messages[chat.id] = [];
+  }
+
+  const timestamp = message.timestamp || new Date().toISOString();
+  const messageRecord = {
+    id: crypto.randomUUID(),
+    chatId: chat.id,
+    direction: message.direction || 'incoming',
+    content: message.content || message.body,
+    type: message.type || 'text',
+    timestamp,
+    sessionId: message.sessionId || null,
+    agentName: message.agentName || null,
+    whatsappId: message.whatsappId || null,
+    ack: message.ack ?? null,
+  };
+
+  data.messages[chat.id].push(messageRecord);
+
+  if (data.messages[chat.id].length > 500) {
+    data.messages[chat.id] = data.messages[chat.id].slice(-500);
+  }
+
+  chat.lastMessageAt = messageRecord.timestamp;
+  chat.messageCount = (chat.messageCount || 0) + 1;
+  chat.automation = chat.automation || {
+    lastAgentMessageAt: null,
+    reminderSentAt: null,
+    autoClosedAt: null,
+  };
+
+  if (message.direction === 'incoming') {
+    chat.unreadCount = (chat.unreadCount || 0) + 1;
+    chat.automation.lastAgentMessageAt = null;
+    chat.automation.reminderSentAt = null;
+    chat.automation.autoClosedAt = null;
+  } else {
+    const automationKind = message.automationKind || null;
+    if (automationKind === 'reminder') {
+      chat.automation.reminderSentAt = messageRecord.timestamp;
+    } else if (automationKind === 'auto-close') {
+      chat.automation.autoClosedAt = messageRecord.timestamp;
+    } else {
+      chat.automation.lastAgentMessageAt = messageRecord.timestamp;
+      chat.automation.reminderSentAt = null;
+      chat.automation.autoClosedAt = null;
+    }
+  }
+
+  return messageRecord;
 };
 
 // ==================== GESTIÓN DE MENSAJES ====================
@@ -526,40 +777,18 @@ const updateChat = (phone, updates) => {
  */
 const logMessage = (phone, message) => {
   const data = loadData();
-  
-  const cleanPhone = phone.replace(/\D/g, '');
-  
-  if (!data.messages[cleanPhone]) {
-    data.messages[cleanPhone] = [];
-  }
+  const cleanPhone = normalizePhone(phone);
+  const latestChat = message.chatId
+    ? resolveChat(data, message.chatId, { includeClosed: true })
+    : getLatestChatByPhone(data, cleanPhone, { includeClosed: true });
+  const chat = !latestChat || latestChat.status === 'closed'
+    ? createChatRecord(data, cleanPhone, { customerName: message.customerName }, latestChat)
+    : latestChat;
 
-  const messageRecord = {
-    id: crypto.randomUUID(),
-    direction: message.direction || 'incoming',
-    content: message.content || message.body,
-    type: message.type || 'text',
-    timestamp: new Date().toISOString(),
-    sessionId: message.sessionId || null,
-    agentName: message.agentName || null,
-    whatsappId: message.whatsappId || null,
-    ack: message.ack ?? null
-  };
-
-  data.messages[cleanPhone].push(messageRecord);
-
-  // Limitar historial a últimos 500 mensajes por chat
-  if (data.messages[cleanPhone].length > 500) {
-    data.messages[cleanPhone] = data.messages[cleanPhone].slice(-500);
-  }
-
-  // Actualizar info del chat
-  if (data.chats[cleanPhone]) {
-    data.chats[cleanPhone].lastMessageAt = messageRecord.timestamp;
-    data.chats[cleanPhone].messageCount = (data.chats[cleanPhone].messageCount || 0) + 1;
-  }
+  const messageRecord = appendMessageToChat(data, chat, message);
 
   saveData(data);
-  chatEvents.emit('change', { type: 'message', action: 'new', phone: cleanPhone, ts: Date.now() });
+  chatEvents.emit('change', { type: 'message', action: 'new', phone: cleanPhone, chatId: chat.id, ts: Date.now() });
 
   return messageRecord;
 };
@@ -569,15 +798,21 @@ const logMessage = (phone, message) => {
  */
 const updateMessageAck = (whatsappId, ack, phoneHint = null) => {
   const data = loadData();
-  const targetPhones = phoneHint ? [phoneHint.replace(/\D/g, '')] : Object.keys(data.messages);
-  for (const phone of targetPhones) {
-    const list = data.messages[phone];
+  const hintedChatIds = phoneHint ? getChatsByPhone(data, phoneHint).map((chat) => chat.id) : [];
+  const targetChatIds = [
+    ...hintedChatIds,
+    ...Object.keys(data.messages).filter((chatId) => !hintedChatIds.includes(chatId)),
+  ];
+
+  for (const chatId of targetChatIds) {
+    const list = data.messages[chatId];
     if (!list) continue;
     const msg = list.find((m) => m.whatsappId === whatsappId);
     if (msg) {
       msg.ack = ack;
       saveData(data);
-      chatEvents.emit('change', { type: 'message-ack', phone, whatsappId, ack, ts: Date.now() });
+      const chat = data.chats[chatId];
+      chatEvents.emit('change', { type: 'message-ack', phone: chat?.phone || null, chatId, whatsappId, ack, ts: Date.now() });
       return true;
     }
   }
@@ -587,16 +822,15 @@ const updateMessageAck = (whatsappId, ack, phoneHint = null) => {
 /**
  * Obtener mensajes de un chat
  */
-const getChatMessages = (phone, options = {}) => {
+const getChatMessages = (chatRef, options = {}) => {
   const data = loadData();
-  
-  const cleanPhone = phone.replace(/\D/g, '');
-  
-  if (!data.messages[cleanPhone]) {
+  const chat = resolveChat(data, chatRef, { includeClosed: true });
+
+  if (!chat || !data.messages[chat.id]) {
     return [];
   }
 
-  let messages = [...data.messages[cleanPhone]];
+  let messages = [...data.messages[chat.id]];
 
   // Filtrar por fecha
   if (options.since) {
@@ -617,11 +851,9 @@ const getChatMessages = (phone, options = {}) => {
 /**
  * Verificar si una sesión tiene acceso a un chat
  */
-const hasAccessToChat = (sessionId, phone) => {
+const hasAccessToChat = (sessionId, chatRef) => {
   const data = loadData();
-  
-  const cleanPhone = phone.replace(/\D/g, '');
-  const chat = data.chats[cleanPhone];
+  const chat = resolveChat(data, chatRef, { includeClosed: true });
 
   if (!chat) return false;
   
@@ -692,6 +924,233 @@ const getGeneralStats = () => {
   };
 };
 
+const getQuickReplies = () => {
+  const data = loadData();
+  return Array.isArray(data.quickReplies) && data.quickReplies.length
+    ? data.quickReplies
+    : DEFAULT_QUICK_REPLIES;
+};
+
+const updateQuickReplies = (quickReplies = []) => {
+  const data = loadData();
+  const sanitized = Array.isArray(quickReplies)
+    ? quickReplies
+        .map((item) => ({
+          id: item?.id || `qr_${crypto.randomUUID().split('-')[0]}`,
+          title: String(item?.title || '').trim(),
+          content: String(item?.content || '').trim(),
+          active: item?.active !== false,
+        }))
+        .filter((item) => item.title && item.content)
+    : [];
+
+  data.quickReplies = sanitized.length ? sanitized : DEFAULT_QUICK_REPLIES;
+  saveData(data);
+  chatEvents.emit('change', { type: 'quick-replies', action: 'update', ts: Date.now() });
+  return data.quickReplies;
+};
+
+const getAutoChatRules = () => {
+  const data = loadData();
+  return sanitizeAutoChatRules(data.autoChatRules);
+};
+
+const updateAutoChatRules = (rules = {}) => {
+  const data = loadData();
+  data.autoChatRules = sanitizeAutoChatRules(rules);
+  saveData(data);
+  chatEvents.emit('change', { type: 'auto-chat-rules', action: 'update', ts: Date.now() });
+  return data.autoChatRules;
+};
+
+const resolveTemplate = (template, chat, session, rules) =>
+  String(template || '')
+    .replace(/\[NOMBRE CLIENTE\]/gi, chat.customerName?.trim() || chat.phone)
+    .replace(/\[NOMBRE DEL AGENTE\]/gi, session?.agentName?.trim() || rules.automationAgentName)
+    .replace(/\[Nombre del Agente\]/g, session?.agentName?.trim() || rules.automationAgentName)
+    .replace(/\[Nombre Cliente\]/g, chat.customerName?.trim() || chat.phone);
+
+const runAutoChatRules = async (sendMessage) => {
+  const data = loadData();
+  const rules = sanitizeAutoChatRules(data.autoChatRules);
+  if (!rules.enabled || typeof sendMessage !== 'function') return { processed: 0, reminders: 0, closed: 0 };
+
+  let processed = 0;
+  let reminders = 0;
+  let closed = 0;
+  let changed = false;
+  const now = Date.now();
+
+  for (const chat of Object.values(data.chats)) {
+    if (!chat || chat.status === 'closed' || !chat.sessionId) continue;
+
+    const messages = data.messages[chat.id] || [];
+    const lastMessage = messages[messages.length - 1];
+    if (!lastMessage || lastMessage.direction !== 'outgoing') continue;
+
+    const session = data.sessions[chat.sessionId];
+    if (!session) continue;
+
+    chat.automation = chat.automation || {
+      lastAgentMessageAt: null,
+      reminderSentAt: null,
+      autoClosedAt: null,
+    };
+
+    const lastAgentMessageAt = chat.automation.lastAgentMessageAt || lastMessage.timestamp;
+    const reminderSentAt = chat.automation.reminderSentAt;
+    const baseReminderTime = new Date(lastAgentMessageAt).getTime();
+
+    if (!Number.isFinite(baseReminderTime)) continue;
+
+    processed += 1;
+
+    if (
+      rules.reminderEnabled &&
+      !reminderSentAt &&
+      now - baseReminderTime >= rules.reminderDelayMinutes * 60 * 1000
+    ) {
+      const reminderMessage = resolveTemplate(rules.reminderMessage, chat, session, rules);
+      const result = await sendMessage(chat.phone, reminderMessage);
+      appendMessageToChat(data, chat, {
+        direction: 'outgoing',
+        content: reminderMessage,
+        type: 'text',
+        sessionId: chat.sessionId,
+        agentName: rules.automationAgentName,
+        whatsappId: result?.whatsappId || null,
+        ack: 0,
+        automationKind: 'reminder',
+      });
+      reminders += 1;
+      changed = true;
+      continue;
+    }
+
+    const closeBase = reminderSentAt || lastAgentMessageAt;
+    const closeBaseMs = new Date(closeBase).getTime();
+
+    if (
+      rules.autoCloseEnabled &&
+      !chat.automation.autoClosedAt &&
+      Number.isFinite(closeBaseMs) &&
+      now - closeBaseMs >= rules.autoCloseDelayMinutes * 60 * 1000
+    ) {
+      const closeMessage = resolveTemplate(rules.autoCloseMessage, chat, session, rules);
+      const result = await sendMessage(chat.phone, closeMessage);
+      appendMessageToChat(data, chat, {
+        direction: 'outgoing',
+        content: closeMessage,
+        type: 'text',
+        sessionId: chat.sessionId,
+        agentName: rules.automationAgentName,
+        whatsappId: result?.whatsappId || null,
+        ack: 0,
+        automationKind: 'auto-close',
+      });
+      chat.status = 'closed';
+      chat.closedAt = new Date().toISOString();
+      closed += 1;
+      changed = true;
+      chatEvents.emit('change', { type: 'chat', action: 'auto-close', phone: chat.phone, chatId: chat.id, ts: Date.now() });
+    }
+  }
+
+  if (changed) {
+    saveData(data);
+  }
+
+  return { processed, reminders, closed };
+};
+
+const getStickerPacks = () => {
+  const data = loadData();
+  return Array.isArray(data.stickerPacks) ? data.stickerPacks : [];
+};
+
+const updateStickerPacks = (stickerPacks = []) => {
+  const data = loadData();
+  const sanitized = Array.isArray(stickerPacks)
+    ? stickerPacks
+        .map((pack, index) => sanitizeStickerPack(pack, index))
+        .filter(Boolean)
+    : [];
+
+  data.stickerPacks = sanitized;
+  saveData(data);
+  chatEvents.emit('change', { type: 'sticker-packs', action: 'update', ts: Date.now() });
+  return data.stickerPacks;
+};
+
+const importStickerPackage = async ({ fileName, base64, packName } = {}) => {
+  const cleanBase64 = String(base64 || '').trim();
+  if (!cleanBase64) {
+    throw new Error('Archivo de paquete vacío');
+  }
+
+  const buffer = Buffer.from(cleanBase64, 'base64');
+  const directory = await unzipper.Open.buffer(buffer);
+  const stickers = [];
+  let parsedMeta = null;
+
+  for (const entry of directory.files) {
+    if (!entry || entry.type !== 'File') continue;
+
+    const rawPath = String(entry.path || '');
+    const entryName = rawPath.split('/').pop() || rawPath;
+    const lowerName = entryName.toLowerCase();
+    if (!entryName || lowerName.startsWith('.') || rawPath.includes('__MACOSX')) continue;
+
+    if (/\.(json)$/i.test(lowerName)) {
+      try {
+        const content = (await entry.buffer()).toString('utf8');
+        const parsed = JSON.parse(content);
+        if (parsed && typeof parsed === 'object') parsedMeta = parsed;
+      } catch {
+        /* ignore invalid metadata */
+      }
+      continue;
+    }
+
+    if (!/\.(webp|png|jpe?g|gif)$/i.test(lowerName)) continue;
+
+    const mimeType = normalizeStickerMimeType(entryName);
+    const entryBuffer = await entry.buffer();
+    const entryBase64 = entryBuffer.toString('base64');
+    stickers.push(
+      sanitizeSticker({
+        name: entryName.replace(/\.[^.]+$/, ''),
+        mimeType,
+        base64: entryBase64,
+        content: createDataUrl(mimeType, entryBase64),
+        active: true,
+      }, stickers.length)
+    );
+  }
+
+  if (!stickers.length) {
+    throw new Error('El paquete no contiene stickers compatibles');
+  }
+
+  const importedPack = sanitizeStickerPack({
+    name:
+      String(packName || parsedMeta?.name || parsedMeta?.title || parsedMeta?.identifier || fileName || 'Paquete importado')
+        .replace(/\.[^.]+$/, '')
+        .trim() || 'Paquete importado',
+    description: String(parsedMeta?.description || parsedMeta?.publisher || '').trim(),
+    active: true,
+    sourceType: 'package',
+    importedAt: new Date().toISOString(),
+    stickers,
+  });
+
+  const data = loadData();
+  data.stickerPacks = [...(Array.isArray(data.stickerPacks) ? data.stickerPacks : []), importedPack];
+  saveData(data);
+  chatEvents.emit('change', { type: 'sticker-packs', action: 'import', packId: importedPack.id, ts: Date.now() });
+  return importedPack;
+};
+
 module.exports = {
   // Sesiones
   createSession,
@@ -726,6 +1185,14 @@ module.exports = {
   // Estadísticas
   getSessionStats,
   getGeneralStats,
+  getQuickReplies,
+  updateQuickReplies,
+  getAutoChatRules,
+  updateAutoChatRules,
+  runAutoChatRules,
+  getStickerPacks,
+  updateStickerPacks,
+  importStickerPackage,
 
   // Eventos
   chatEvents

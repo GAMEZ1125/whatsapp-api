@@ -344,6 +344,13 @@ router.get('/chats/:phone/messages', chatSessionAuth, chatSessionController.getC
  *         description: Estadísticas de sesiones y chats
  */
 router.get('/stats', chatSessionAuth, chatSessionController.getStats);
+router.get('/quick-replies', chatSessionAuth, chatSessionController.getQuickReplies);
+router.put('/quick-replies', chatSessionAuth, chatSessionController.updateQuickReplies);
+router.get('/auto-chat-rules', chatSessionAuth, chatSessionController.getAutoChatRules);
+router.put('/auto-chat-rules', chatSessionAuth, chatSessionController.updateAutoChatRules);
+router.get('/stickers', chatSessionAuth, chatSessionController.getStickerPacks);
+router.put('/stickers', chatSessionAuth, chatSessionController.updateStickerPacks);
+router.post('/stickers/import-package', chatSessionAuth, chatSessionController.importStickerPackage);
 
 // ==================== RUTAS PARA AGENTES (Session Key) ====================
 
