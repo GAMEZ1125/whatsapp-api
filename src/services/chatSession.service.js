@@ -541,7 +541,8 @@ const logMessage = (phone, message) => {
     timestamp: new Date().toISOString(),
     sessionId: message.sessionId || null,
     agentName: message.agentName || null,
-    whatsappId: message.whatsappId || null
+    whatsappId: message.whatsappId || null,
+    ack: message.ack ?? null
   };
 
   data.messages[cleanPhone].push(messageRecord);
@@ -561,6 +562,26 @@ const logMessage = (phone, message) => {
   chatEvents.emit('change', { type: 'message', action: 'new', phone: cleanPhone, ts: Date.now() });
 
   return messageRecord;
+};
+
+/**
+ * Actualizar ACK de un mensaje por whatsappId
+ */
+const updateMessageAck = (whatsappId, ack, phoneHint = null) => {
+  const data = loadData();
+  const targetPhones = phoneHint ? [phoneHint.replace(/\D/g, '')] : Object.keys(data.messages);
+  for (const phone of targetPhones) {
+    const list = data.messages[phone];
+    if (!list) continue;
+    const msg = list.find((m) => m.whatsappId === whatsappId);
+    if (msg) {
+      msg.ack = ack;
+      saveData(data);
+      chatEvents.emit('change', { type: 'message-ack', phone, whatsappId, ack, ts: Date.now() });
+      return true;
+    }
+  }
+  return false;
 };
 
 /**
@@ -696,6 +717,7 @@ module.exports = {
   // Mensajes
   logMessage,
   getChatMessages,
+  updateMessageAck,
   
   // Validación
   hasAccessToChat,

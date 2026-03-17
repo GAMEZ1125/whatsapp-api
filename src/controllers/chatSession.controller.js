@@ -543,7 +543,8 @@ const sendMessageAsAgent = async (req, res) => {
       type: 'text',
       sessionId: session.id,
       agentName: session.agentName,
-      whatsappId: result.whatsappId
+      whatsappId: result.whatsappId,
+      ack: 0 // pending until WhatsApp sends real ACK
     });
 
     res.json({
@@ -592,13 +593,18 @@ const sendMediaAsAgent = async (req, res) => {
 
     const result = await whatsappService.sendMedia(phone, mimeType, base64, fileName || 'file');
 
+    const contentForUI = mimeType.startsWith('image/')
+      ? `data:${mimeType};base64,${base64}`
+      : (fileName || 'documento');
+
     chatSessionService.logMessage(phone, {
       direction: 'outgoing',
-      content: fileName || 'media',
+      content: contentForUI,
       type: mimeType.startsWith('image/') ? 'image' : 'document',
       sessionId: session.id,
       agentName: session.agentName,
-      whatsappId: result.whatsappId
+      whatsappId: result.whatsappId,
+      ack: 0 // start pending so UI shows check while waiting for ACK
     });
 
     res.json({
@@ -670,7 +676,10 @@ module.exports = {
   // Mensajes
   getChatMessages,
   sendMessageAsAgent,
+  sendMediaAsAgent,
 
   // Stats
   getStats
 };
+
+

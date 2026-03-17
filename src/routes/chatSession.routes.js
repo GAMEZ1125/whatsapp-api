@@ -538,7 +538,8 @@ router.get('/agent/chat/:phone/messages', chatSessionAuth, chatSessionController
  *       403:
  *         description: No tienes acceso a este chat
  */
-router.post('/agent/send', chatSessionAuth, chatSessionController.sendMessageAsAgent);\nrouter.post('/agent/send-media', chatSessionAuth, chatSessionController.sendMediaAsAgent);
+router.post('/agent/send', chatSessionAuth, chatSessionController.sendMessageAsAgent);
+router.post('/agent/send-media', chatSessionAuth, chatSessionController.sendMediaAsAgent);
 
 // SSE stream para cambios en chats y mensajes (acepta apiKey por query o header)
 router.get('/events', async (req, res) => {
@@ -579,4 +580,6 @@ router.get('/events', async (req, res) => {
 });
 
 module.exports = router;
+
+
 

@@ -91,6 +91,17 @@ class WhatsAppService {
         this.emit('message', message);
       });
 
+      // ACK de mensajes (entregado / leído)
+      this.client.on('message_ack', async (msg, ack) => {
+        try {
+          const chatSessionService = require('./chatSession.service');
+          const phone = (msg.to || msg.from || msg.id?.remote || '').replace(/@.+/, '').replace(/\D/g, '');
+          chatSessionService.updateMessageAck(msg.id?._serialized, ack, phone);
+        } catch (e) {
+          logger.warn('No se pudo actualizar ACK:', e.message);
+        }
+      });
+
       // Iniciar cliente
       this.client.initialize().catch((error) => {
         logger.error('Error al inicializar WhatsApp:', error);
@@ -466,8 +477,20 @@ class WhatsAppService {
         else if (message.type === 'audio' || message.type === 'ptt') messageType = 'audio';
         else if (message.type === 'video') messageType = 'video';
         else messageType = 'media';
-        
-        content = message.body || `[${messageType.toUpperCase()}]`;
+
+        // intentar descargar el media entrante y guardarlo como data URL
+        try {
+          const media = await message.downloadMedia();
+          if (media?.data && media?.mimetype) {
+            content = `data:${media.mimetype};base64,${media.data}`;
+          } else {
+            throw new Error('downloadMedia returned empty data');
+          }
+        } catch (e) {
+          logger.warn(`No se pudo descargar media entrante (${message.type}): ${e.message}`);
+          // Fallback: deja al menos una etiqueta legible para la UI
+          content = message.body || `[${messageType.toUpperCase()}]`;
+        }
       }
 
       // Registrar el mensaje
