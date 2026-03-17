@@ -1,89 +1,55 @@
-/**
- * Controlador de API Keys
- * Endpoints para gestión de API Keys
- */
-
 const apikeyService = require('../services/apikey.service');
 const logger = require('../config/logger');
 
-/**
- * Crear una nueva API Key
- */
 const createApiKey = async (req, res) => {
   try {
-    const { name, description, expiresAt, permissions } = req.body;
+    const { name, description, permissions, clientId, plan } = req.body;
+    if (!name) return res.status(400).json({ success: false, error: 'El nombre es requerido' });
 
-    if (!name) {
-      return res.status(400).json({
-        success: false,
-        error: 'El nombre es requerido'
-      });
-    }
-
-    const newKey = apikeyService.createApiKey({
+    const newKeyRes = await apikeyService.createApiKey({
       name,
       description,
-      expiresAt,
-      permissions
+      permissions,
+      clientId: clientId || null,
+      plan: plan || null,
     });
+    const newKey = newKeyRes.data;
 
     res.status(201).json({
       success: true,
-      message: 'API Key creada exitosamente. ¡Guarda la key, no se mostrará de nuevo!',
+      message: 'API Key creada. Guárdala; no se mostrará de nuevo.',
       data: {
         id: newKey.id,
-        key: newKey.key,  // Solo se muestra completa al crear
-        name: newKey.name,
-        description: newKey.description,
-        permissions: newKey.permissions,
-        createdAt: newKey.createdAt,
-        expiresAt: newKey.expiresAt
-      }
+        key: newKey.key,
+        name,
+        description,
+        permissions,
+        clientId: clientId || null,
+        plan: plan || null,
+      },
     });
   } catch (error) {
     logger.error('Error creando API Key:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Error al crear la API Key'
-    });
+    res.status(500).json({ success: false, error: 'Error al crear la API Key' });
   }
 };
 
-/**
- * Listar todas las API Keys
- */
-const listApiKeys = async (req, res) => {
+const listApiKeys = async (_req, res) => {
   try {
-    const keys = apikeyService.listApiKeys(false);
-
-    res.json({
-      success: true,
-      data: keys,
-      total: keys.length
-    });
+    const keysRes = await apikeyService.listApiKeys(false);
+    const keys = keysRes.data || [];
+    res.json({ success: true, data: keys, total: keys.length });
   } catch (error) {
     logger.error('Error listando API Keys:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Error al listar las API Keys'
-    });
+    res.status(500).json({ success: false, error: 'Error al listar las API Keys' });
   }
 };
 
-/**
- * Obtener una API Key por ID
- */
 const getApiKey = async (req, res) => {
   try {
     const { id } = req.params;
-    const key = apikeyService.getApiKeyById(id);
-
-    if (!key) {
-      return res.status(404).json({
-        success: false,
-        error: 'API Key no encontrada'
-      });
-    }
+    const key = await apikeyService.getApiKeyById(id, false);
+    if (!key) return res.status(404).json({ success: false, error: 'API Key no encontrada' });
 
     res.json({
       success: true,
@@ -94,169 +60,89 @@ const getApiKey = async (req, res) => {
         description: key.description,
         permissions: key.permissions,
         active: key.active,
+        clientId: key.clientId,
+        plan: key.plan,
         createdAt: key.createdAt,
-        expiresAt: key.expiresAt,
-        lastUsedAt: key.lastUsedAt,
-        usageCount: key.usageCount
-      }
+        updatedAt: key.updatedAt,
+      },
     });
   } catch (error) {
     logger.error('Error obteniendo API Key:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Error al obtener la API Key'
-    });
+    res.status(500).json({ success: false, error: 'Error al obtener la API Key' });
   }
 };
 
-/**
- * Actualizar una API Key
- */
 const updateApiKey = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description, permissions, expiresAt } = req.body;
+    const { name, description, permissions, clientId, plan, active } = req.body;
 
-    const result = apikeyService.updateApiKey(id, {
+    const result = await apikeyService.updateApiKey(id, {
       name,
       description,
       permissions,
-      expiresAt
+      clientId,
+      plan,
+      active,
     });
 
-    if (!result.success) {
-      return res.status(404).json({
-        success: false,
-        error: result.error
-      });
-    }
+    if (!result.success) return res.status(404).json({ success: false, error: result.error });
 
-    res.json({
-      success: true,
-      message: 'API Key actualizada correctamente',
-      data: result.data
-    });
+    res.json({ success: true, message: 'API Key actualizada' });
   } catch (error) {
     logger.error('Error actualizando API Key:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Error al actualizar la API Key'
-    });
+    res.status(500).json({ success: false, error: 'Error al actualizar la API Key' });
   }
 };
 
-/**
- * Revocar una API Key
- */
 const revokeApiKey = async (req, res) => {
   try {
     const { id } = req.params;
-    const result = apikeyService.revokeApiKey(id);
-
-    if (!result.success) {
-      return res.status(404).json({
-        success: false,
-        error: result.error
-      });
-    }
-
-    res.json({
-      success: true,
-      message: 'API Key revocada correctamente'
-    });
+    await apikeyService.updateApiKey(id, { active: false });
+    res.json({ success: true, message: 'API Key revocada' });
   } catch (error) {
     logger.error('Error revocando API Key:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Error al revocar la API Key'
-    });
+    res.status(500).json({ success: false, error: 'Error al revocar la API Key' });
   }
 };
 
-/**
- * Activar una API Key
- */
 const activateApiKey = async (req, res) => {
   try {
     const { id } = req.params;
-    const result = apikeyService.activateApiKey(id);
-
-    if (!result.success) {
-      return res.status(404).json({
-        success: false,
-        error: result.error
-      });
-    }
-
-    res.json({
-      success: true,
-      message: 'API Key activada correctamente'
-    });
+    await apikeyService.updateApiKey(id, { active: true });
+    res.json({ success: true, message: 'API Key activada' });
   } catch (error) {
     logger.error('Error activando API Key:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Error al activar la API Key'
-    });
+    res.status(500).json({ success: false, error: 'Error al activar la API Key' });
   }
 };
 
-/**
- * Eliminar una API Key
- */
 const deleteApiKey = async (req, res) => {
   try {
     const { id } = req.params;
-    const result = apikeyService.deleteApiKey(id);
-
-    if (!result.success) {
-      return res.status(404).json({
-        success: false,
-        error: result.error
-      });
-    }
-
-    res.json({
-      success: true,
-      message: 'API Key eliminada permanentemente'
-    });
+    await apikeyService.deleteApiKey(id);
+    res.json({ success: true, message: 'API Key eliminada permanentemente' });
   } catch (error) {
     logger.error('Error eliminando API Key:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Error al eliminar la API Key'
-    });
+    res.status(500).json({ success: false, error: 'Error al eliminar la API Key' });
   }
 };
 
-/**
- * Regenerar una API Key
- */
 const regenerateApiKey = async (req, res) => {
   try {
     const { id } = req.params;
-    const result = apikeyService.regenerateApiKey(id);
-
-    if (!result.success) {
-      return res.status(404).json({
-        success: false,
-        error: result.error
-      });
-    }
+    // Crear una nueva key y sobreescribir valor
+    const newKeyRes = await apikeyService.createApiKey({ ...(req.body || {}), id });
+    await apikeyService.updateApiKey(id, { active: true, key: newKeyRes.data.key });
 
     res.json({
       success: true,
-      message: 'API Key regenerada. ¡Guarda la nueva key, no se mostrará de nuevo!',
-      data: {
-        key: result.key
-      }
+      message: 'API Key regenerada. Guarda la nueva key, no se mostrará de nuevo.',
+      data: { key: newKeyRes.data.key },
     });
   } catch (error) {
     logger.error('Error regenerando API Key:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Error al regenerar la API Key'
-    });
+    res.status(500).json({ success: false, error: 'Error al regenerar la API Key' });
   }
 };
 
@@ -268,5 +154,5 @@ module.exports = {
   revokeApiKey,
   activateApiKey,
   deleteApiKey,
-  regenerateApiKey
+  regenerateApiKey,
 };

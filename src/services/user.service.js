@@ -170,23 +170,40 @@ const getUserByApiKey = async (apiKey) => {
 const createUser = async (payload) => {
   const id = uuidv4();
 
-  await pool.execute(
-    `
-      INSERT INTO ${USERS_TABLE} (id, name, email, role, status, apiKey, clientName, chatsAssigned, lastActivity)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-    [
-      id,
-      payload.name,
-      payload.email,
-      payload.role,
-      payload.status || 'active',
-      payload.apiKey || null,
-      payload.clientName || null,
-      payload.chatsAssigned || 0,
-      payload.lastActivity || null,
-    ]
-  );
+  // evita duplicados por email
+  const existing = await getUserByEmail(payload.email);
+  if (existing) {
+    const error = new Error('El correo ya está registrado');
+    error.code = 'DUP_EMAIL';
+    throw error;
+  }
+
+  try {
+    await pool.execute(
+      `
+        INSERT INTO ${USERS_TABLE} (id, name, email, role, status, apiKey, clientName, chatsAssigned, lastActivity)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        id,
+        payload.name,
+        payload.email,
+        payload.role,
+        payload.status || 'active',
+        payload.apiKey || null,
+        payload.clientName || null,
+        payload.chatsAssigned || 0,
+        payload.lastActivity || null,
+      ]
+    );
+  } catch (err) {
+    if (err && err.code === 'ER_DUP_ENTRY') {
+      const dup = new Error('El correo ya está registrado');
+      dup.code = 'DUP_EMAIL';
+      throw dup;
+    }
+    throw err;
+  }
 
   return getUserById(id);
 };

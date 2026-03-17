@@ -30,7 +30,7 @@ const apiKeyAuth = async (req, res, next) => {
   }
 
   // 1. Validar la API Key (master o generada por apikeyService)
-  let keyInfo = apikeyService.validateApiKey(apiKey);
+  let keyInfo = await apikeyService.validateApiKey(apiKey);
 
   // 2. Si no es una key del servicio de apikeys, buscar en la tabla de Usuarios
   if (!keyInfo) {
@@ -43,6 +43,7 @@ const apiKeyAuth = async (req, res, next) => {
           id: user.id,
           name: user.name,
           role: user.role,
+          clientId: user.clientId,
           permissions: (user.role === 'superadmin' || user.role === 'admin' || user.role === 'supervisor') ? ['*'] : ['chat:read', 'chat:write'],
           isUser: true
         };
@@ -63,6 +64,9 @@ const apiKeyAuth = async (req, res, next) => {
 
   // Agregar info de la key al request
   req.apiKeyInfo = keyInfo;
+  if (keyInfo.clientId) {
+    req.user = { role: keyInfo.role || 'admin', clientId: keyInfo.clientId };
+  }
   next();
 };
 
@@ -162,9 +166,11 @@ const chatSessionAuth = async (req, res, next) => {
         id: user.id,
         name: user.name,
         role: user.role,
+        clientId: user.clientId,
         permissions: (user.role === 'superadmin' || user.role === 'admin' || user.role === 'supervisor') ? ['*'] : ['chat:read'],
         isUser: true
       };
+      req.user = { role: user.role, clientId: user.clientId };
       return next();
     }
   } catch (error) {

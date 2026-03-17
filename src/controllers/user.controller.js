@@ -73,6 +73,12 @@ const createUser = async (req, res) => {
       data: user
     });
   } catch (error) {
+    if (error.code === 'DUP_EMAIL') {
+      return res.status(409).json({
+        success: false,
+        error: 'El correo ya existe. Usa uno diferente.'
+      });
+    }
     logger.error('Error creando usuario:', error);
     res.status(500).json({
       success: false,
