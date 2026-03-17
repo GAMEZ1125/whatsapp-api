@@ -9,9 +9,9 @@ const chatSessionService = require('../services/chatSession.service');
 
 /**
  * Verifica la API Key en los headers
- * Soporta tanto la master key del .env como las keys generadas
+ * Soporta tanto la master key del .env como las keys generadas y keys de usuarios
  */
-const apiKeyAuth = (req, res, next) => {
+const apiKeyAuth = async (req, res, next) => {
   const apiKey = req.headers['x-api-key'];
 
   // Si no hay API_KEY configurada en .env, permitir en desarrollo
@@ -29,8 +29,28 @@ const apiKeyAuth = (req, res, next) => {
     });
   }
 
-  // Validar la API Key (master o generada)
-  const keyInfo = apikeyService.validateApiKey(apiKey);
+  // 1. Validar la API Key (master o generada por apikeyService)
+  let keyInfo = apikeyService.validateApiKey(apiKey);
+
+  // 2. Si no es una key del servicio de apikeys, buscar en la tabla de Usuarios
+  if (!keyInfo) {
+    try {
+      const userService = require('../services/user.service');
+      const user = await userService.getUserByApiKey(apiKey);
+
+      if (user) {
+        keyInfo = {
+          id: user.id,
+          name: user.name,
+          role: user.role,
+          permissions: (user.role === 'superadmin' || user.role === 'admin' || user.role === 'supervisor') ? ['*'] : ['chat:read', 'chat:write'],
+          isUser: true
+        };
+      }
+    } catch (error) {
+      logger.error('Error validando API Key de usuario:', error);
+    }
+  }
 
   if (!keyInfo) {
     logger.warn(`Intento de acceso con API Key inválida: ${apiKey.substring(0, 8)}...`);
@@ -70,7 +90,7 @@ const masterKeyAuth = (req, res, next) => {
   }
 
   if (apiKey !== masterKey) {
-    logger.warn(`Intento de acceso a ruta protegida sin Master Key`);
+    logger.warn(`Intento de acceso a ruta protegida sin Master Key: ${req.method} ${req.originalUrl}`);
     return res.status(403).json({
       success: false,
       error: 'Se requiere la Master Key para esta operación',
@@ -84,9 +104,9 @@ const masterKeyAuth = (req, res, next) => {
 
 /**
  * Middleware para autenticación de sesiones de chat (agentes)
- * Acepta tanto Master Key como Session Key
+ * Acepta tanto Master Key como User Key (Supervisor/Admin) como Session Key
  */
-const chatSessionAuth = (req, res, next) => {
+const chatSessionAuth = async (req, res, next) => {
   const apiKey = req.headers['x-api-key'];
   const masterKey = process.env.API_KEY;
 
@@ -105,15 +125,15 @@ const chatSessionAuth = (req, res, next) => {
     });
   }
 
-  // Primero verificar si es Master Key
+  // 1. Verificar si es Master Key
   if (apiKey === masterKey) {
     req.apiKeyInfo = { isMaster: true, permissions: ['*'] };
     return next();
   }
 
-  // Verificar si es una Session Key
+  // 2. Verificar si es una Session Key (Agente tradicional)
   const session = chatSessionService.getSessionByApiKey(apiKey);
-  
+
   if (session) {
     if (session.status !== 'active') {
       return res.status(403).json({
@@ -122,14 +142,33 @@ const chatSessionAuth = (req, res, next) => {
         code: 'SESSION_INACTIVE'
       });
     }
-    
+
     req.chatSession = session;
-    req.apiKeyInfo = { 
-      isSession: true, 
+    req.apiKeyInfo = {
+      isSession: true,
       sessionId: session.id,
-      permissions: session.permissions 
+      permissions: session.permissions
     };
     return next();
+  }
+
+  // 3. Verificar si es una User Key (Admin/Supervisor)
+  try {
+    const userService = require('../services/user.service');
+    const user = await userService.getUserByApiKey(apiKey);
+
+    if (user) {
+      req.apiKeyInfo = {
+        id: user.id,
+        name: user.name,
+        role: user.role,
+        permissions: (user.role === 'superadmin' || user.role === 'admin' || user.role === 'supervisor') ? ['*'] : ['chat:read'],
+        isUser: true
+      };
+      return next();
+    }
+  } catch (error) {
+    logger.error('Error validando API Key en chatSessionAuth:', error);
   }
 
   // No es ninguna key válida
@@ -146,11 +185,11 @@ const chatSessionAuth = (req, res, next) => {
  */
 const optionalAuth = (req, res, next) => {
   const apiKey = req.headers['x-api-key'];
-  
+
   if (apiKey) {
     return apiKeyAuth(req, res, next);
   }
-  
+
   next();
 };
 
@@ -175,8 +214,8 @@ const requirePermission = (requiredPermissions) => {
       return next();
     }
 
-    const permissions = Array.isArray(requiredPermissions) 
-      ? requiredPermissions 
+    const permissions = Array.isArray(requiredPermissions)
+      ? requiredPermissions
       : [requiredPermissions];
 
     const hasPermission = permissions.some(p => keyInfo.permissions.includes(p));

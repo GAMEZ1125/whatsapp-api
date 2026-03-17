@@ -58,7 +58,7 @@ const { masterKeyAuth, chatSessionAuth } = require('../middlewares/auth');
  *       201:
  *         description: Sesión creada exitosamente
  */
-router.post('/sessions', masterKeyAuth, chatSessionController.createSession);
+router.post('/sessions', chatSessionAuth, chatSessionController.createSession);
 
 /**
  * @swagger
@@ -72,7 +72,7 @@ router.post('/sessions', masterKeyAuth, chatSessionController.createSession);
  *       200:
  *         description: Lista de sesiones
  */
-router.get('/sessions', masterKeyAuth, chatSessionController.listSessions);
+router.get('/sessions', chatSessionAuth, chatSessionController.listSessions);
 
 /**
  * @swagger
@@ -92,7 +92,7 @@ router.get('/sessions', masterKeyAuth, chatSessionController.listSessions);
  *       200:
  *         description: Información de la sesión
  */
-router.get('/sessions/:sessionId', masterKeyAuth, chatSessionController.getSession);
+router.get('/sessions/:sessionId', chatSessionAuth, chatSessionController.getSession);
 
 /**
  * @swagger
@@ -127,7 +127,7 @@ router.get('/sessions/:sessionId', masterKeyAuth, chatSessionController.getSessi
  *       200:
  *         description: Sesión actualizada
  */
-router.put('/sessions/:sessionId', masterKeyAuth, chatSessionController.updateSession);
+router.put('/sessions/:sessionId', chatSessionAuth, chatSessionController.updateSession);
 
 /**
  * @swagger
@@ -147,7 +147,7 @@ router.put('/sessions/:sessionId', masterKeyAuth, chatSessionController.updateSe
  *       200:
  *         description: Sesión eliminada
  */
-router.delete('/sessions/:sessionId', masterKeyAuth, chatSessionController.deleteSession);
+router.delete('/sessions/:sessionId', chatSessionAuth, chatSessionController.deleteSession);
 
 /**
  * @swagger
@@ -167,7 +167,7 @@ router.delete('/sessions/:sessionId', masterKeyAuth, chatSessionController.delet
  *       200:
  *         description: Nueva API Key generada
  */
-router.post('/sessions/:sessionId/regenerate-key', masterKeyAuth, chatSessionController.regenerateSessionKey);
+router.post('/sessions/:sessionId/regenerate-key', chatSessionAuth, chatSessionController.regenerateSessionKey);
 
 // ==================== RUTAS DE GESTIÓN DE CHATS (Master Key) ====================
 
@@ -183,7 +183,7 @@ router.post('/sessions/:sessionId/regenerate-key', masterKeyAuth, chatSessionCon
  *       200:
  *         description: Lista de chats pendientes
  */
-router.get('/chats/pending', masterKeyAuth, chatSessionController.getPendingChats);
+router.get('/chats/pending', chatSessionAuth, chatSessionController.getPendingChats);
 
 /**
  * @swagger
@@ -207,7 +207,7 @@ router.get('/chats/pending', masterKeyAuth, chatSessionController.getPendingChat
  *       200:
  *         description: Lista de chats
  */
-router.get('/chats', masterKeyAuth, chatSessionController.getAllChats);
+router.get('/chats', chatSessionAuth, chatSessionController.getAllChats);
 
 /**
  * @swagger
@@ -237,7 +237,7 @@ router.get('/chats', masterKeyAuth, chatSessionController.getAllChats);
  *       200:
  *         description: Chat asignado
  */
-router.post('/chats/assign', masterKeyAuth, chatSessionController.assignChat);
+router.post('/chats/assign', chatSessionAuth, chatSessionController.assignChat);
 
 /**
  * @swagger
@@ -257,7 +257,7 @@ router.post('/chats/assign', masterKeyAuth, chatSessionController.assignChat);
  *       200:
  *         description: Información del chat
  */
-router.get('/chats/:phone', masterKeyAuth, chatSessionController.getChatInfo);
+router.get('/chats/:phone', chatSessionAuth, chatSessionController.getChatInfo);
 
 /**
  * @swagger
@@ -294,7 +294,7 @@ router.get('/chats/:phone', masterKeyAuth, chatSessionController.getChatInfo);
  *       200:
  *         description: Chat actualizado
  */
-router.put('/chats/:phone', masterKeyAuth, chatSessionController.updateChatInfo);
+router.put('/chats/:phone', chatSessionAuth, chatSessionController.updateChatInfo);
 
 /**
  * @swagger
@@ -324,7 +324,7 @@ router.put('/chats/:phone', masterKeyAuth, chatSessionController.updateChatInfo)
  *       200:
  *         description: Lista de mensajes
  */
-router.get('/chats/:phone/messages', masterKeyAuth, chatSessionController.getChatMessages);
+router.get('/chats/:phone/messages', chatSessionAuth, chatSessionController.getChatMessages);
 
 /**
  * @swagger
@@ -338,7 +338,7 @@ router.get('/chats/:phone/messages', masterKeyAuth, chatSessionController.getCha
  *       200:
  *         description: Estadísticas de sesiones y chats
  */
-router.get('/stats', masterKeyAuth, chatSessionController.getStats);
+router.get('/stats', chatSessionAuth, chatSessionController.getStats);
 
 // ==================== RUTAS PARA AGENTES (Session Key) ====================
 

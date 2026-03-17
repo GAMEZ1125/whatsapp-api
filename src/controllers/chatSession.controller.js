@@ -600,7 +600,7 @@ module.exports = {
   updateSession,
   deleteSession,
   regenerateSessionKey,
-  
+
   // Chats
   getPendingChats,
   getAllChats,
@@ -611,11 +611,11 @@ module.exports = {
   closeChat,
   getChatInfo,
   updateChatInfo,
-  
+
   // Mensajes
   getChatMessages,
   sendMessageAsAgent,
-  
+
   // Stats
   getStats
 };

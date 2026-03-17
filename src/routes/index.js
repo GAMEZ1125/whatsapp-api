@@ -11,6 +11,7 @@ const contactRoutes = require('./contact.routes');
 const webhookRoutes = require('./webhook.routes');
 const apikeyRoutes = require('./apikey.routes');
 const chatSessionRoutes = require('./chatSession.routes');
+const userRoutes = require('./user.routes');
 
 // Rutas de la API
 router.use('/messages', messageRoutes);
@@ -19,6 +20,7 @@ router.use('/contacts', contactRoutes);
 router.use('/webhooks', webhookRoutes);
 router.use('/auth', apikeyRoutes);
 router.use('/chat-sessions', chatSessionRoutes);
+router.use('/users', userRoutes);
 
 // Información de la API
 router.get('/', (req, res) => {

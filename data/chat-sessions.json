@@ -1,5 +1,63 @@
 {
-  "sessions": {},
-  "chats": {},
+  "sessions": {
+    "ses_agent1": {
+      "id": "ses_agent1",
+      "name": "Soporte Ventas 1",
+      "agentName": "Carlos Pérez",
+      "apiKey": "cs_mockkey1",
+      "status": "active",
+      "maxChats": 10,
+      "permissions": [
+        "*"
+      ],
+      "createdAt": "2026-03-17T00:00:00Z",
+      "lastActivity": "2026-03-17T04:00:00Z"
+    },
+    "ses_agent2": {
+      "id": "ses_agent2",
+      "name": "Soporte Técnico 1",
+      "agentName": "Ana Martínez",
+      "apiKey": "cs_mockkey2",
+      "status": "active",
+      "maxChats": 5,
+      "permissions": [
+        "*"
+      ],
+      "createdAt": "2026-03-17T00:00:00Z",
+      "lastActivity": "2026-03-17T10:56:22.197Z"
+    }
+  },
+  "chats": {
+    "573001234567": {
+      "phone": "573001234567",
+      "sessionId": "ses_agent2",
+      "status": "assigned",
+      "priority": "high",
+      "tags": [
+        "cliente_frecuente"
+      ],
+      "customerName": "Juan Valbuena",
+      "notes": "",
+      "createdAt": "2026-03-17T04:10:00Z",
+      "assignedAt": "2026-03-17T10:56:22.197Z",
+      "closedAt": null,
+      "lastMessageAt": "2026-03-17T04:15:00Z",
+      "messageCount": 5
+    },
+    "573119876543": {
+      "phone": "573119876543",
+      "sessionId": "ses_agent1",
+      "status": "assigned",
+      "priority": "normal",
+      "tags": [],
+      "customerName": "Maria Gomez",
+      "notes": "",
+      "createdAt": "2026-03-17T04:05:00Z",
+      "assignedAt": "2026-03-17T04:06:00Z",
+      "closedAt": null,
+      "lastMessageAt": "2026-03-17T04:12:00Z",
+      "messageCount": 12
+    }
+  },
   "messages": {}
 }

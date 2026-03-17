@@ -16,6 +16,7 @@ const rateLimit = require('express-rate-limit');
 const logger = require('./config/logger');
 const swaggerSetup = require('./config/swagger');
 const whatsappService = require('./services/whatsapp.service');
+const userService = require('./services/user.service');
 const routes = require('./routes');
 const errorHandler = require('./middlewares/errorHandler');
 
@@ -82,9 +83,10 @@ app.use('*', (req, res) => {
 // Iniciar servidor
 const startServer = async () => {
   try {
-    // Inicializar WhatsApp
+    // Inicializar servicios
     logger.info('Iniciando servicio de WhatsApp...');
     await whatsappService.initialize();
+    await userService.initialize();
 
     app.listen(PORT, () => {
       logger.info(`🚀 Servidor corriendo en http://localhost:${PORT}`);

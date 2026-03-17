@@ -74,6 +74,11 @@ const options = {
         name: 'Chat Sessions - Agent',
         description: 'Endpoints para agentes. Ver/tomar chats, enviar mensajes, transferir conversaciones.'
       }
+      ,
+      {
+        name: 'Users',
+        description: 'Gestión de usuarios, roles, asignaciones y llaves de acceso.'
+      }
     ],
     components: {
       securitySchemes: {
@@ -150,6 +155,78 @@ const options = {
                 timestamp: {
                   type: 'string',
                   format: 'date-time'
+                }
+              }
+            }
+          }
+        },
+        User: {
+          type: 'object',
+          properties: {
+            id: {
+              type: 'string',
+              format: 'uuid'
+            },
+            name: {
+              type: 'string'
+            },
+            email: {
+              type: 'string',
+              format: 'email'
+            },
+            role: {
+              type: 'string'
+            },
+            status: {
+              type: 'string'
+            },
+            apiKey: {
+              type: 'string'
+            },
+            clientName: {
+              type: 'string'
+            },
+            chatsAssigned: {
+              type: 'integer'
+            },
+            lastActivity: {
+              type: 'string',
+              format: 'date-time'
+            },
+            createdAt: {
+              type: 'string',
+              format: 'date-time'
+            },
+            updatedAt: {
+              type: 'string',
+              format: 'date-time'
+            }
+          }
+        },
+        UserList: {
+          type: 'object',
+          properties: {
+            success: {
+              type: 'boolean',
+              example: true
+            },
+            data: {
+              type: 'array',
+              items: {
+                $ref: '#/components/schemas/User'
+              }
+            },
+            pagination: {
+              type: 'object',
+              properties: {
+                total: {
+                  type: 'integer'
+                },
+                page: {
+                  type: 'integer'
+                },
+                limit: {
+                  type: 'integer'
                 }
               }
             }

@@ -1,0 +1,2 @@
+id	name	email	role	apiKey
+385034cd-a706-415b-8578-fe3e5353b4d3	Laura M‚ndez	laura@retailplus.com	supervisor	rp_user_8f4b2c
