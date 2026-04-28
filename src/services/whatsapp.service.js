@@ -109,9 +109,18 @@ class WhatsAppRuntime {
       });
 
       this.client.on('disconnected', async (reason) => {
+        const currentClient = this.client;
+        this.client = null;
         this.isReady = false;
         this.status = 'disconnected';
         await this.persistState({ status: 'disconnected' });
+        if (currentClient) {
+          try {
+            await currentClient.destroy();
+          } catch (error) {
+            logger.warn(`No se pudo destruir el cliente al desconectar ${this.connection.sessionName}: ${error.message}`);
+          }
+        }
         logger.warn(`WhatsApp desconectado (${this.connection.sessionName}): ${reason}`);
         this.onEvent('disconnected', { connectionId: this.connection.id, reason });
       });
@@ -300,7 +309,14 @@ class WhatsAppRuntime {
 
   async logout() {
     if (this.client) {
-      await this.client.logout();
+      const currentClient = this.client;
+      this.client = null;
+      await currentClient.logout();
+      try {
+        await currentClient.destroy();
+      } catch (error) {
+        logger.warn(`No se pudo destruir el cliente tras logout ${this.connection.sessionName}: ${error.message}`);
+      }
       this.isReady = false;
       this.status = 'disconnected';
       await this.persistState({ status: 'disconnected' });
