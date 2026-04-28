@@ -151,10 +151,30 @@ const startServer = async () => {
       }
     }, 60 * 1000);
 
-    app.listen(PORT, () => {
-      logger.info(`🚀 Servidor corriendo en http://localhost:${PORT}`);
-      logger.info(`📚 Documentación disponible en http://localhost:${PORT}/api-docs`);
-    });
+    const https = require('node:https');
+    const http = require('node:http');
+    const fs = require('node:fs');
+    const path = require('node:path');
+
+    const sslDir = path.join(__dirname, '../ssl');
+    const keyPath = path.join(sslDir, 'gamez-solutions.ddns.net-key.pem');
+    const certPath = path.join(sslDir, 'gamez-solutions.ddns.net-chain.pem');
+
+    if (fs.existsSync(keyPath) && fs.existsSync(certPath)) {
+      const sslOptions = {
+        key: fs.readFileSync(keyPath),
+        cert: fs.readFileSync(certPath),
+      };
+      https.createServer(sslOptions, app).listen(PORT, () => {
+        logger.info(`🚀 Servidor seguro (HTTPS) corriendo en el puerto ${PORT}`);
+        logger.info(`📚 Documentación disponible en https://gamez-solutions.ddns.net:${PORT}/api-docs`);
+      });
+    } else {
+      http.createServer(app).listen(PORT, () => {
+        logger.info(`🚀 Servidor (HTTP) corriendo en http://localhost:${PORT}`);
+        logger.info(`📚 Documentación disponible en http://localhost:${PORT}/api-docs`);
+      });
+    }
   } catch (error) {
     logger.error('Error al iniciar el servidor:', error);
     process.exit(1);
