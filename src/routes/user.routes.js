@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const userController = require('../controllers/user.controller');
+const { chatSessionAuth } = require('../middlewares/auth');
+
+router.post('/login', userController.login);
+router.use(chatSessionAuth);
 
 /**
  * @openapi
@@ -197,6 +201,4 @@ router.delete('/:id', userController.deleteUser);
  *       401:
  *         description: Credenciales inválidas
  */
-router.post('/login', userController.login);
-
 module.exports = router;

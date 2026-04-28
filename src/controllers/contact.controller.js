@@ -7,6 +7,14 @@
  */
 
 const whatsappService = require('../services/whatsapp.service');
+const { resolveTenantAccess } = require('../middlewares/auth');
+
+const getRuntimeOptions = (req) => ({
+  connectionId: req.query.connectionId || req.body?.connectionId || null,
+  clientId: resolveTenantAccess(req, req.query.clientId || req.body?.clientId || null),
+  authClientId: req.user?.clientId || null,
+  isMaster: !!req.apiKeyInfo?.isMaster,
+});
 
 /**
  * @swagger
@@ -46,7 +54,7 @@ const checkNumber = async (req, res, next) => {
   try {
     const { phone } = req.params;
     
-    const isRegistered = await whatsappService.isRegistered(phone);
+    const isRegistered = await whatsappService.isRegistered(phone, getRuntimeOptions(req));
     
     res.json({
       success: true,
@@ -87,12 +95,13 @@ const checkNumber = async (req, res, next) => {
 const checkBulkNumbers = async (req, res, next) => {
   try {
     const { phones } = req.body;
+    const runtimeOptions = getRuntimeOptions(req);
     
     const results = [];
     
     for (const phone of phones) {
       try {
-        const isRegistered = await whatsappService.isRegistered(phone);
+        const isRegistered = await whatsappService.isRegistered(phone, runtimeOptions);
         results.push({ phone, isRegistered });
       } catch (error) {
         results.push({ phone, isRegistered: false, error: error.message });
@@ -138,7 +147,7 @@ const getContactInfo = async (req, res, next) => {
   try {
     const { phone } = req.params;
     
-    const info = await whatsappService.getContactInfo(phone);
+    const info = await whatsappService.getContactInfo(phone, getRuntimeOptions(req));
     
     res.json({
       success: true,

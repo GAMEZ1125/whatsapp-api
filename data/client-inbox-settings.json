@@ -1,0 +1,39 @@
+{
+  "clients": {
+    "ee3b97d0-1239-11f1-a227-f0038cd89556": {
+      "clientId": "ee3b97d0-1239-11f1-a227-f0038cd89556",
+      "defaultConnectionId": null,
+      "defaultGroupId": "grp_1a1728ed",
+      "handoffKeywords": "agente,asesor,humano,persona",
+      "groups": [
+        {
+          "id": "grp_1a1728ed",
+          "name": "Grupo principal",
+          "description": "Canal principal de atencion",
+          "connectionId": "ed023bb7-a8f0-442f-98c1-c36d7992d9cf",
+          "workflow": "manual",
+          "sessionIds": [],
+          "active": true,
+          "chatbotEnabled": true,
+          "welcomeMessage": "Hola [NOMBRE CLIENTE], soy el asistente virtual. Antes de pasar con un agente, cuentame en que te puedo ayudar.",
+          "handoffMessage": "Perfecto [NOMBRE CLIENTE], voy a dejar tu chat listo para que un agente humano te atienda.",
+          "fallbackMessage": "Gracias [NOMBRE CLIENTE]. Ya registramos tu mensaje y seguiremos contigo en breve.",
+          "keywordRules": [
+            {
+              "id": "rule_64608192",
+              "label": "Ventas",
+              "keywords": "precio,cotizacion,comprar,ventas",
+              "response": "Con gusto te ayudamos con ventas. Cuentame que producto o servicio te interesa."
+            },
+            {
+              "id": "rule_f6649d63",
+              "label": "Soporte",
+              "keywords": "soporte,error,falla,ayuda",
+              "response": "Entendido. Describe por favor el inconveniente para que soporte lo revise."
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

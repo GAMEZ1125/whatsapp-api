@@ -3,6 +3,24 @@ const { pool } = require('../config/db');
 
 const TABLE = 'whatsapp_connections';
 
+async function initialize() {
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS ${TABLE} (
+      id CHAR(36) PRIMARY KEY,
+      clientId VARCHAR(100) NOT NULL,
+      phone VARCHAR(40) NOT NULL,
+      session_name VARCHAR(200) NOT NULL,
+      status VARCHAR(50) NOT NULL DEFAULT 'pending',
+      last_qr LONGTEXT NULL,
+      qr_expires_at DATETIME NULL,
+      wwebjs_session_path VARCHAR(255) NULL,
+      concurrent_limit INT NOT NULL DEFAULT 5,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+  `);
+}
+
 const mapRow = (r) => ({
   id: r.id,
   clientId: r.clientId,
@@ -27,6 +45,13 @@ async function list(clientId = null) {
 async function getById(id) {
   const [rows] = await pool.execute(`SELECT * FROM ${TABLE} WHERE id = ?`, [id]);
   return rows[0] ? mapRow(rows[0]) : null;
+}
+
+async function getByIdForClient(id, clientId) {
+  const connection = await getById(id);
+  if (!connection) return null;
+  if (clientId && connection.clientId !== clientId) return null;
+  return connection;
 }
 
 async function create(data) {
@@ -77,8 +102,10 @@ async function remove(id) {
 }
 
 module.exports = {
+  initialize,
   list,
   getById,
+  getByIdForClient,
   create,
   update,
   remove,

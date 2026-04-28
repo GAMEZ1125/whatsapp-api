@@ -1,5 +1,10 @@
 const userService = require('../services/user.service');
 const logger = require('../config/logger');
+const clientService = require('../services/client.service');
+const { resolveTenantAccess } = require('../middlewares/auth');
+
+const getScopedClientId = (req, requestedClientId = null) =>
+  resolveTenantAccess(req, requestedClientId || req.query.clientId || req.body?.clientId || null);
 
 const listUsers = async (req, res) => {
   try {
@@ -9,6 +14,7 @@ const listUsers = async (req, res) => {
       status: req.query.status,
       page: req.query.page,
       limit: req.query.limit,
+      clientId: getScopedClientId(req, req.query.clientId || null),
     };
 
     const { users, total, page, limit } = await userService.listUsers(filters);
@@ -23,16 +29,18 @@ const listUsers = async (req, res) => {
     });
   } catch (error) {
     logger.error('Error listando usuarios:', error);
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
-      error: 'Error al listar los usuarios'
+      error: error.message || 'Error al listar los usuarios'
     });
   }
 };
 
 const getUser = async (req, res) => {
   try {
-    const user = await userService.getUserById(req.params.id);
+    const user = await userService.getUserById(req.params.id, {
+      clientId: getScopedClientId(req, req.query.clientId || null),
+    });
 
     if (!user) {
       return res.status(404).json({
@@ -47,9 +55,9 @@ const getUser = async (req, res) => {
     });
   } catch (error) {
     logger.error('Error obteniendo usuario:', error);
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
-      error: 'Error al buscar el usuario'
+      error: error.message || 'Error al buscar el usuario'
     });
   }
 };
@@ -66,7 +74,13 @@ const createUser = async (req, res) => {
       }
     }
 
-    const user = await userService.createUser(req.body);
+    const isMaster = req.apiKeyInfo?.isMaster;
+    const scopedClientId = getScopedClientId(req, req.body.clientId || null);
+    const user = await userService.createUser({
+      ...req.body,
+      clientId: scopedClientId,
+      clientName: isMaster ? req.body.clientName : undefined,
+    });
     res.status(201).json({
       success: true,
       message: 'Usuario creado',
@@ -80,9 +94,9 @@ const createUser = async (req, res) => {
       });
     }
     logger.error('Error creando usuario:', error);
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
-      error: 'Error al crear el usuario'
+      error: error.message || 'Error al crear el usuario'
     });
   }
 };
@@ -90,24 +104,39 @@ const createUser = async (req, res) => {
 const updateUser = async (req, res) => {
   try {
     const updates = req.body;
-    const user = await userService.updateUser(req.params.id, updates);
+    const user = await userService.updateUser(
+      req.params.id,
+      {
+        ...updates,
+        clientId: updates.clientId !== undefined ? getScopedClientId(req, updates.clientId) : updates.clientId,
+      },
+      { clientId: getScopedClientId(req, req.query.clientId || null) }
+    );
     res.json({
       success: true,
       message: 'Usuario actualizado',
       data: user
     });
   } catch (error) {
+    if (error.code === 'USER_NOT_FOUND') {
+      return res.status(404).json({
+        success: false,
+        error: 'Usuario no encontrado'
+      });
+    }
     logger.error('Error actualizando usuario:', error);
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
-      error: 'Error al actualizar el usuario'
+      error: error.message || 'Error al actualizar el usuario'
     });
   }
 };
 
 const deleteUser = async (req, res) => {
   try {
-    const deleted = await userService.deleteUser(req.params.id);
+    const deleted = await userService.deleteUser(req.params.id, {
+      clientId: getScopedClientId(req, req.query.clientId || null),
+    });
     if (!deleted) {
       return res.status(404).json({
         success: false,
@@ -121,9 +150,9 @@ const deleteUser = async (req, res) => {
     });
   } catch (error) {
     logger.error('Error eliminando usuario:', error);
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
-      error: 'Error al eliminar the usuario'
+      error: error.message || 'Error al eliminar el usuario'
     });
   }
 };
@@ -151,6 +180,7 @@ const login = async (req, res) => {
     // Por ahora, como no hay campo de password en la DB, aceptamos cualquier password
     // o validamos contra el apiKey si el usuario lo ingresa como password
     // Pero para facilitar el "Ver Datos Reales", simplemente devolvemos el usuario
+    const clientId = await clientService.resolveClientId(user.clientId || user.clientName || null);
 
     res.json({
       success: true,
@@ -161,7 +191,8 @@ const login = async (req, res) => {
           name: user.name,
           email: user.email,
           role: user.role,
-          clientId: user.clientName, // Usamos clientName como clientId para el frontend
+          clientId,
+          clientName: user.clientName || null,
           status: user.status
         },
         token: user.apiKey || process.env.API_KEY // Devolvemos su apiKey como token

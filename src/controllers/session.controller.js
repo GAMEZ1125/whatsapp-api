@@ -8,6 +8,19 @@
 
 const whatsappService = require('../services/whatsapp.service');
 const logger = require('../config/logger');
+const { resolveTenantAccess } = require('../middlewares/auth');
+
+const getRuntimeOptions = (req) => {
+  const requestedClientId = req.query.clientId || req.body?.clientId || null;
+  const requestedConnectionId = req.query.connectionId || req.body?.connectionId || null;
+
+  return {
+    connectionId: requestedConnectionId,
+    clientId: resolveTenantAccess(req, requestedClientId),
+    authClientId: req.user?.clientId || null,
+    isMaster: !!req.apiKeyInfo?.isMaster,
+  };
+};
 
 /**
  * @swagger
@@ -38,13 +51,17 @@ const logger = require('../config/logger');
  *                     hasQR:
  *                       type: boolean
  */
-const getStatus = (req, res) => {
-  const status = whatsappService.getStatus();
+const getStatus = async (req, res, next) => {
+  try {
+    const status = await whatsappService.getVisibleStatus(getRuntimeOptions(req));
   
-  res.json({
-    success: true,
-    data: status
-  });
+    res.json({
+      success: true,
+      data: status
+    });
+  } catch (error) {
+    next(error);
+  }
 };
 
 /**
@@ -76,7 +93,7 @@ const getStatus = (req, res) => {
  */
 const getQRCode = async (req, res, next) => {
   try {
-    const qrCode = await whatsappService.getQRCode();
+    const qrCode = await whatsappService.getQRCode(getRuntimeOptions(req));
     
     if (!qrCode) {
       return res.status(404).json({
@@ -116,7 +133,7 @@ const getQRCode = async (req, res, next) => {
  */
 const getQRCodeImage = async (req, res, next) => {
   try {
-    const qrCode = await whatsappService.getQRCode();
+    const qrCode = await whatsappService.getQRCode(getRuntimeOptions(req));
     
     if (!qrCode) {
       return res.status(404).send('No hay código QR disponible');
@@ -150,7 +167,7 @@ const getQRCodeImage = async (req, res, next) => {
  */
 const getProfile = async (req, res, next) => {
   try {
-    const profile = await whatsappService.getProfile();
+    const profile = await whatsappService.getProfile(getRuntimeOptions(req));
     
     res.json({
       success: true,
@@ -175,7 +192,7 @@ const getProfile = async (req, res, next) => {
  */
 const logout = async (req, res, next) => {
   try {
-    await whatsappService.logout();
+    await whatsappService.logout(getRuntimeOptions(req));
     
     res.json({
       success: true,
@@ -201,14 +218,13 @@ const logout = async (req, res, next) => {
 const restart = async (req, res, next) => {
   try {
     logger.info('Reiniciando conexión de WhatsApp...');
-    
-    await whatsappService.destroy();
-    await whatsappService.initialize();
+    const options = getRuntimeOptions(req);
+    const status = await whatsappService.restart(options);
     
     res.json({
       success: true,
       message: 'Conexión reiniciada',
-      data: whatsappService.getStatus()
+      data: status
     });
   } catch (error) {
     next(error);

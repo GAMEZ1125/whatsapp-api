@@ -37,7 +37,17 @@ router.get('/', (req, res) => {
       contacts: '/api/contacts',
       webhooks: '/api/webhooks',
       auth: '/api/auth',
-      chatSessions: '/api/chat-sessions'
+      chatSessions: '/api/chat-sessions',
+      whatsappConnections: '/api/whatsapp-connections',
+      users: '/api/users'
+    },
+    multitenant: {
+      mode: 'shared-environment',
+      auth: 'tenant-api-key',
+      notes: [
+        'Cada tenant debe usar su propia API key',
+        'Las conexiones y operaciones quedan aisladas por clientId'
+      ]
     }
   });
 });

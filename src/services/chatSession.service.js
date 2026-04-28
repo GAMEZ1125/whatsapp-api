@@ -10,6 +10,7 @@ const crypto = require('crypto');
 const { EventEmitter } = require('events');
 const unzipper = require('unzipper');
 const logger = require('../config/logger');
+const inboxSettingsService = require('./clientInboxSettings.service');
 
 const DATA_FILE = path.join(__dirname, '../../data/chat-sessions.json');
 const chatEvents = new EventEmitter();
@@ -72,6 +73,10 @@ if (!fs.existsSync(dataDir)) {
  * Cargar datos desde archivo
  */
 const normalizePhone = (phone = '') => String(phone).replace(/\D/g, '');
+const normalizeConnectionId = (connectionId = null) => {
+  const normalized = String(connectionId || '').trim();
+  return normalized || null;
+};
 
 const generateChatId = () => `chat_${crypto.randomUUID().split('-')[0]}`;
 
@@ -188,6 +193,9 @@ const normalizePersistedData = (rawData = {}) => {
     normalized.chats[chatId] = {
       id: chatId,
       phone: cleanPhone,
+      connectionId: normalizeConnectionId(rawChat.connectionId || rawChat.channelId || null),
+      groupId: rawChat.groupId || rawChat.botState?.groupId || null,
+      workflow: rawChat.workflow || 'manual',
       sessionId: rawChat.sessionId || null,
       status: rawChat.status || 'pending',
       priority: rawChat.priority || 'normal',
@@ -204,6 +212,12 @@ const normalizePersistedData = (rawData = {}) => {
         lastAgentMessageAt: rawChat.automation?.lastAgentMessageAt || null,
         reminderSentAt: rawChat.automation?.reminderSentAt || null,
         autoClosedAt: rawChat.automation?.autoClosedAt || null,
+      },
+      botState: {
+        groupId: rawChat.botState?.groupId || null,
+        welcomeSentAt: rawChat.botState?.welcomeSentAt || null,
+        lastBotReplyAt: rawChat.botState?.lastBotReplyAt || null,
+        handoffSentAt: rawChat.botState?.handoffSentAt || null,
       },
     };
 
@@ -266,31 +280,76 @@ const getChatsByPhone = (data, phone) => {
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 };
 
-const getLatestChatByPhone = (data, phone, { includeClosed = true } = {}) => {
-  const matches = getChatsByPhone(data, phone).filter((chat) => includeClosed || chat.status !== 'closed');
+const getChatsByPhoneAndConnection = (data, phone, connectionId = null) => {
+  const cleanPhone = normalizePhone(phone);
+  const normalizedConnectionId = normalizeConnectionId(connectionId);
+  return Object.values(data.chats)
+    .filter((chat) => {
+      if (chat.phone !== cleanPhone) return false;
+      if (!normalizedConnectionId) return true;
+      return normalizeConnectionId(chat.connectionId) === normalizedConnectionId;
+    })
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+};
+
+const getLatestChatByPhone = (data, phone, { includeClosed = true, connectionId = null } = {}) => {
+  const matches = getChatsByPhoneAndConnection(data, phone, connectionId).filter((chat) => includeClosed || chat.status !== 'closed');
   return matches[0] || null;
 };
 
-const resolveChat = (data, chatRef, { includeClosed = true } = {}) => {
+const resolveChat = (data, chatRef, { includeClosed = true, connectionId = null } = {}) => {
   if (!chatRef) return null;
   if (data.chats[chatRef]) {
     const exactChat = data.chats[chatRef];
+    if (connectionId && normalizeConnectionId(exactChat.connectionId) !== normalizeConnectionId(connectionId)) return null;
     if (!includeClosed && exactChat.status === 'closed') return null;
     return exactChat;
   }
 
-  const latestChat = getLatestChatByPhone(data, chatRef, { includeClosed });
+  const latestChat = getLatestChatByPhone(data, chatRef, { includeClosed, connectionId });
   return latestChat || null;
+};
+
+const getAssignedChatsCount = (data, sessionId) =>
+  Object.values(data.chats).filter((chat) => chat.sessionId === sessionId && chat.status === 'assigned').length;
+
+const canAssignToSession = (data, sessionId) => {
+  const session = data.sessions[sessionId];
+  if (!session || session.status !== 'active') return false;
+  return getAssignedChatsCount(data, sessionId) < session.maxChats;
+};
+
+const selectSessionForWorkflow = (data, sessionIds = [], workflow = 'manual') => {
+  const eligible = sessionIds
+    .map((sessionId) => data.sessions[sessionId])
+    .filter(Boolean)
+    .filter((session) => canAssignToSession(data, session.id));
+
+  if (!eligible.length || workflow === 'manual') return null;
+
+  if (workflow === 'least_loaded') {
+    return eligible
+      .map((session) => ({ session, load: getAssignedChatsCount(data, session.id) }))
+      .sort((a, b) => a.load - b.load || new Date(a.session.lastActivity || 0) - new Date(b.session.lastActivity || 0))[0]
+      ?.session || null;
+  }
+
+  return eligible
+    .sort((a, b) => new Date(a.lastActivity || 0) - new Date(b.lastActivity || 0))[0] || null;
 };
 
 const createChatRecord = (data, phone, options = {}, previousChat = null) => {
   const cleanPhone = normalizePhone(phone);
+  const connectionId = normalizeConnectionId(options.connectionId || previousChat?.connectionId || null);
   const chatId = generateChatId();
   const createdAt = new Date().toISOString();
 
   data.chats[chatId] = {
     id: chatId,
     phone: cleanPhone,
+    connectionId,
+    groupId: options.groupId || previousChat?.groupId || null,
+    workflow: options.workflow || previousChat?.workflow || 'manual',
     sessionId: null,
     status: 'pending',
     priority: options.priority || previousChat?.priority || 'normal',
@@ -307,6 +366,12 @@ const createChatRecord = (data, phone, options = {}, previousChat = null) => {
       lastAgentMessageAt: null,
       reminderSentAt: null,
       autoClosedAt: null,
+    },
+    botState: {
+      groupId: null,
+      welcomeSentAt: null,
+      lastBotReplyAt: null,
+      handoffSentAt: null,
     },
   };
 
@@ -462,7 +527,8 @@ const regenerateSessionKey = (sessionId) => {
 const registerChat = (phone, options = {}) => {
   const data = loadData();
   const cleanPhone = normalizePhone(phone);
-  const latestChat = getLatestChatByPhone(data, cleanPhone, { includeClosed: true });
+  const connectionId = normalizeConnectionId(options.connectionId || null);
+  const latestChat = getLatestChatByPhone(data, cleanPhone, { includeClosed: true, connectionId });
   const chat = !latestChat || latestChat.status === 'closed'
     ? createChatRecord(data, cleanPhone, options, latestChat)
     : latestChat;
@@ -471,16 +537,57 @@ const registerChat = (phone, options = {}) => {
   if (options.customerName && !chat.customerName) {
     chat.customerName = options.customerName;
   }
+  if (options.groupId !== undefined) {
+    chat.groupId = options.groupId || null;
+  }
+  if (options.workflow) {
+    chat.workflow = options.workflow;
+  }
+  if (connectionId) {
+    chat.connectionId = connectionId;
+  }
 
   saveData(data);
   chatEvents.emit('change', {
     type: 'chat',
     action: latestChat ? 'upsert' : 'create',
     phone: cleanPhone,
+    connectionId,
     chatId: chat.id,
     ts: Date.now(),
   });
   return chat;
+};
+
+const updateChatRouting = (chatRef, updates = {}) => {
+  const data = loadData();
+  const chat = resolveChat(data, chatRef, { includeClosed: true, connectionId: updates.connectionId || null });
+
+  if (!chat) {
+    return { success: false, error: 'Chat no encontrado' };
+  }
+
+  if (updates.connectionId !== undefined) {
+    chat.connectionId = normalizeConnectionId(updates.connectionId);
+  }
+  if (updates.groupId !== undefined) {
+    chat.groupId = updates.groupId || null;
+    chat.botState = {
+      groupId: chat.botState?.groupId || null,
+      welcomeSentAt: chat.botState?.welcomeSentAt || null,
+      lastBotReplyAt: chat.botState?.lastBotReplyAt || null,
+      handoffSentAt: chat.botState?.handoffSentAt || null,
+      ...chat.botState,
+      groupId: updates.groupId || null,
+    };
+  }
+  if (updates.workflow !== undefined) {
+    chat.workflow = updates.workflow || 'manual';
+  }
+
+  saveData(data);
+  chatEvents.emit('change', { type: 'chat', action: 'route', phone: chat.phone, connectionId: chat.connectionId || null, chatId: chat.id, ts: Date.now() });
+  return { success: true, data: chat };
 };
 
 /**
@@ -501,8 +608,7 @@ const assignChat = (chatRef, sessionId) => {
   // Verificar límite de chats de la sesión
   if (sessionId) {
     const session = data.sessions[sessionId];
-    const currentChats = Object.values(data.chats)
-      .filter(c => c.sessionId === sessionId && c.status === 'assigned').length;
+    const currentChats = getAssignedChatsCount(data, sessionId);
     
     if (currentChats >= session.maxChats) {
       return { success: false, error: 'La sesión ha alcanzado el límite de chats' };
@@ -523,13 +629,38 @@ const assignChat = (chatRef, sessionId) => {
   saveData(data);
 
   logger.info(`🔄 Chat ${chat.phone} (${chat.id}) ${sessionId ? `asignado a sesión ${sessionId}` : 'desasignado'}`);
-  chatEvents.emit('change', { type: 'chat', action: 'assign', phone: chat.phone, chatId: chat.id, sessionId, ts: Date.now() });
+  chatEvents.emit('change', { type: 'chat', action: 'assign', phone: chat.phone, connectionId: chat.connectionId || null, chatId: chat.id, sessionId, ts: Date.now() });
 
   return { 
     success: true, 
     data: chat,
     previousSession
   };
+};
+
+const autoAssignChatByWorkflow = (chatRef, sessionIds = [], workflow = 'manual') => {
+  const data = loadData();
+  const chat = resolveChat(data, chatRef, { includeClosed: false });
+
+  if (!chat) {
+    return { success: false, error: 'Chat no encontrado' };
+  }
+
+  const selectedSession = selectSessionForWorkflow(data, sessionIds, workflow);
+  if (!selectedSession) {
+    return { success: false, error: 'No hay sesiones disponibles para este workflow' };
+  }
+
+  chat.sessionId = selectedSession.id;
+  chat.status = 'assigned';
+  chat.assignedAt = new Date().toISOString();
+  chat.closedAt = null;
+  chat.workflow = workflow || chat.workflow || 'manual';
+  data.sessions[selectedSession.id].lastActivity = new Date().toISOString();
+
+  saveData(data);
+  chatEvents.emit('change', { type: 'chat', action: 'auto-assign', phone: chat.phone, connectionId: chat.connectionId || null, chatId: chat.id, sessionId: selectedSession.id, ts: Date.now() });
+  return { success: true, data: chat };
 };
 
 /**
@@ -571,7 +702,7 @@ const transferChat = (chatRef, fromSessionId, toSessionId) => {
   saveData(data);
 
   logger.info(`↔️ Chat ${chat.phone} (${chat.id}) transferido de ${fromSessionId} a ${toSessionId}`);
-  chatEvents.emit('change', { type: 'chat', action: 'transfer', phone: chat.phone, chatId: chat.id, fromSessionId, toSessionId, ts: Date.now() });
+  chatEvents.emit('change', { type: 'chat', action: 'transfer', phone: chat.phone, connectionId: chat.connectionId || null, chatId: chat.id, fromSessionId, toSessionId, ts: Date.now() });
 
   return { success: true, data: chat };
 };
@@ -598,7 +729,7 @@ const closeChat = (chatRef, sessionId = null) => {
   saveData(data);
 
   logger.info(`✅ Chat cerrado: ${chat.phone} (${chat.id})`);
-  chatEvents.emit('change', { type: 'chat', action: 'close', phone: chat.phone, chatId: chat.id, ts: Date.now() });
+  chatEvents.emit('change', { type: 'chat', action: 'close', phone: chat.phone, connectionId: chat.connectionId || null, chatId: chat.id, ts: Date.now() });
 
   return { success: true, data: chat };
 };
@@ -619,7 +750,7 @@ const reopenChat = (chatRef) => {
 
   saveData(data);
 
-  chatEvents.emit('change', { type: 'chat', action: 'reopen', phone: chat.phone, chatId: chat.id, ts: Date.now() });
+  chatEvents.emit('change', { type: 'chat', action: 'reopen', phone: chat.phone, connectionId: chat.connectionId || null, chatId: chat.id, ts: Date.now() });
   return { success: true, data: chat };
 };
 
@@ -651,11 +782,15 @@ const getSessionChats = (sessionId, filters = {}) => {
 /**
  * Obtener chats pendientes (sin asignar)
  */
-const getPendingChats = () => {
+const getPendingChats = (filters = {}) => {
   const data = loadData();
   
   return Object.values(data.chats)
-    .filter(chat => chat.status === 'pending')
+    .filter((chat) => {
+      if (chat.status !== 'pending') return false;
+      if (filters.connectionId && normalizeConnectionId(chat.connectionId) !== normalizeConnectionId(filters.connectionId)) return false;
+      return true;
+    })
     .sort((a, b) => {
       // Ordenar por prioridad y luego por fecha
       const priorityOrder = { urgent: 0, high: 1, normal: 2, low: 3 };
@@ -681,15 +816,19 @@ const getAllChats = (filters = {}) => {
     chats = chats.filter(c => c.sessionId === filters.sessionId);
   }
 
+  if (filters.connectionId) {
+    chats = chats.filter((chat) => normalizeConnectionId(chat.connectionId) === normalizeConnectionId(filters.connectionId));
+  }
+
   return chats.sort((a, b) => new Date(b.lastMessageAt) - new Date(a.lastMessageAt));
 };
 
 /**
  * Obtener información de un chat específico
  */
-const getChatInfo = (phone) => {
+const getChatInfo = (chatRef, options = {}) => {
   const data = loadData();
-  return resolveChat(data, phone, { includeClosed: true });
+  return resolveChat(data, chatRef, { includeClosed: true, connectionId: options.connectionId || null });
 };
 
 /**
@@ -716,6 +855,96 @@ const updateChat = (chatRef, updates) => {
   return { success: true, data: chat };
 };
 
+const updateChatBotState = (chatRef, updates = {}) => {
+  const data = loadData();
+  const chat = resolveChat(data, chatRef, { includeClosed: true });
+
+  if (!chat) {
+    return { success: false, error: 'Chat no encontrado' };
+  }
+
+  chat.botState = {
+    groupId: chat.botState?.groupId || null,
+    welcomeSentAt: chat.botState?.welcomeSentAt || null,
+    lastBotReplyAt: chat.botState?.lastBotReplyAt || null,
+    handoffSentAt: chat.botState?.handoffSentAt || null,
+    ...updates,
+  };
+
+  saveData(data);
+  return { success: true, data: chat.botState };
+};
+
+const getChatForSession = (sessionId, chatRef) => {
+  const data = loadData();
+  const normalizedRef = normalizePhone(chatRef);
+  const candidates = Object.values(data.chats)
+    .filter((chat) => chat.sessionId === sessionId)
+    .sort((a, b) => new Date(b.lastMessageAt || b.createdAt || 0) - new Date(a.lastMessageAt || a.createdAt || 0));
+
+  return candidates.find((chat) => chat.id === chatRef) ||
+    candidates.find((chat) => chat.phone === normalizedRef) ||
+    null;
+};
+
+const resolveChatRouting = (chatRef, clientId = null) => {
+  const data = loadData();
+  const chat = resolveChat(data, chatRef, { includeClosed: true });
+
+  if (!chat) {
+    return { success: false, error: 'Chat no encontrado' };
+  }
+
+  if (chat.connectionId) {
+    return {
+      success: true,
+      data: {
+        connectionId: chat.connectionId,
+        groupId: chat.groupId || null,
+        workflow: chat.workflow || 'manual',
+      },
+    };
+  }
+
+  const siblingWithConnection = getChatsByPhone(data, chat.phone).find(
+    (candidate) => candidate.id !== chat.id && candidate.connectionId
+  );
+
+  if (siblingWithConnection?.connectionId) {
+    return {
+      success: true,
+      data: {
+        connectionId: siblingWithConnection.connectionId,
+        groupId: siblingWithConnection.groupId || chat.groupId || null,
+        workflow: siblingWithConnection.workflow || chat.workflow || 'manual',
+      },
+    };
+  }
+
+  if (clientId) {
+    const settings = inboxSettingsService.getClientSettings(clientId);
+    const preferredGroup =
+      (settings.groups || []).find((group) => group.id === chat.groupId) ||
+      (settings.groups || []).find((group) => group.id === settings.defaultGroupId) ||
+      (settings.groups || []).find((group) => group.active && group.connectionId);
+
+    const fallbackConnectionId = preferredGroup?.connectionId || settings.defaultConnectionId || null;
+
+    if (fallbackConnectionId) {
+      return {
+        success: true,
+        data: {
+          connectionId: fallbackConnectionId,
+          groupId: preferredGroup?.id || chat.groupId || null,
+          workflow: preferredGroup?.workflow || chat.workflow || 'manual',
+        },
+      };
+    }
+  }
+
+  return { success: false, error: 'El chat no tiene una conexión de WhatsApp asociada.' };
+};
+
 const appendMessageToChat = (data, chat, message) => {
   if (!data.messages[chat.id]) {
     data.messages[chat.id] = [];
@@ -725,6 +954,7 @@ const appendMessageToChat = (data, chat, message) => {
   const messageRecord = {
     id: crypto.randomUUID(),
     chatId: chat.id,
+    connectionId: normalizeConnectionId(message.connectionId || chat.connectionId || null),
     direction: message.direction || 'incoming',
     content: message.content || message.body,
     type: message.type || 'text',
@@ -778,17 +1008,18 @@ const appendMessageToChat = (data, chat, message) => {
 const logMessage = (phone, message) => {
   const data = loadData();
   const cleanPhone = normalizePhone(phone);
+  const connectionId = normalizeConnectionId(message.connectionId || null);
   const latestChat = message.chatId
-    ? resolveChat(data, message.chatId, { includeClosed: true })
-    : getLatestChatByPhone(data, cleanPhone, { includeClosed: true });
+    ? resolveChat(data, message.chatId, { includeClosed: true, connectionId })
+    : getLatestChatByPhone(data, cleanPhone, { includeClosed: true, connectionId });
   const chat = !latestChat || latestChat.status === 'closed'
-    ? createChatRecord(data, cleanPhone, { customerName: message.customerName }, latestChat)
+    ? createChatRecord(data, cleanPhone, { customerName: message.customerName, connectionId }, latestChat)
     : latestChat;
 
   const messageRecord = appendMessageToChat(data, chat, message);
 
   saveData(data);
-  chatEvents.emit('change', { type: 'message', action: 'new', phone: cleanPhone, chatId: chat.id, ts: Date.now() });
+  chatEvents.emit('change', { type: 'message', action: 'new', phone: cleanPhone, connectionId: chat.connectionId || null, chatId: chat.id, ts: Date.now() });
 
   return messageRecord;
 };
@@ -796,9 +1027,9 @@ const logMessage = (phone, message) => {
 /**
  * Actualizar ACK de un mensaje por whatsappId
  */
-const updateMessageAck = (whatsappId, ack, phoneHint = null) => {
+const updateMessageAck = (whatsappId, ack, phoneHint = null, connectionId = null) => {
   const data = loadData();
-  const hintedChatIds = phoneHint ? getChatsByPhone(data, phoneHint).map((chat) => chat.id) : [];
+  const hintedChatIds = phoneHint ? getChatsByPhoneAndConnection(data, phoneHint, connectionId).map((chat) => chat.id) : [];
   const targetChatIds = [
     ...hintedChatIds,
     ...Object.keys(data.messages).filter((chatId) => !hintedChatIds.includes(chatId)),
@@ -812,7 +1043,7 @@ const updateMessageAck = (whatsappId, ack, phoneHint = null) => {
       msg.ack = ack;
       saveData(data);
       const chat = data.chats[chatId];
-      chatEvents.emit('change', { type: 'message-ack', phone: chat?.phone || null, chatId, whatsappId, ack, ts: Date.now() });
+      chatEvents.emit('change', { type: 'message-ack', phone: chat?.phone || null, connectionId: chat?.connectionId || null, chatId, whatsappId, ack, ts: Date.now() });
       return true;
     }
   }
@@ -853,7 +1084,12 @@ const getChatMessages = (chatRef, options = {}) => {
  */
 const hasAccessToChat = (sessionId, chatRef) => {
   const data = loadData();
-  const chat = resolveChat(data, chatRef, { includeClosed: true });
+  const chat = typeof chatRef === 'object' && chatRef !== null
+    ? resolveChat(data, chatRef.chatId || chatRef.phone || chatRef, {
+        includeClosed: true,
+        connectionId: chatRef.connectionId || null,
+      })
+    : resolveChat(data, chatRef, { includeClosed: true });
 
   if (!chat) return false;
   
@@ -1011,7 +1247,9 @@ const runAutoChatRules = async (sendMessage) => {
       now - baseReminderTime >= rules.reminderDelayMinutes * 60 * 1000
     ) {
       const reminderMessage = resolveTemplate(rules.reminderMessage, chat, session, rules);
-      const result = await sendMessage(chat.phone, reminderMessage);
+      const result = await sendMessage(chat.phone, reminderMessage, {
+        connectionId: chat.connectionId || null,
+      });
       appendMessageToChat(data, chat, {
         direction: 'outgoing',
         content: reminderMessage,
@@ -1021,6 +1259,7 @@ const runAutoChatRules = async (sendMessage) => {
         whatsappId: result?.whatsappId || null,
         ack: 0,
         automationKind: 'reminder',
+        connectionId: chat.connectionId || null,
       });
       reminders += 1;
       changed = true;
@@ -1037,7 +1276,9 @@ const runAutoChatRules = async (sendMessage) => {
       now - closeBaseMs >= rules.autoCloseDelayMinutes * 60 * 1000
     ) {
       const closeMessage = resolveTemplate(rules.autoCloseMessage, chat, session, rules);
-      const result = await sendMessage(chat.phone, closeMessage);
+      const result = await sendMessage(chat.phone, closeMessage, {
+        connectionId: chat.connectionId || null,
+      });
       appendMessageToChat(data, chat, {
         direction: 'outgoing',
         content: closeMessage,
@@ -1047,12 +1288,13 @@ const runAutoChatRules = async (sendMessage) => {
         whatsappId: result?.whatsappId || null,
         ack: 0,
         automationKind: 'auto-close',
+        connectionId: chat.connectionId || null,
       });
       chat.status = 'closed';
       chat.closedAt = new Date().toISOString();
       closed += 1;
       changed = true;
-      chatEvents.emit('change', { type: 'chat', action: 'auto-close', phone: chat.phone, chatId: chat.id, ts: Date.now() });
+      chatEvents.emit('change', { type: 'chat', action: 'auto-close', phone: chat.phone, connectionId: chat.connectionId || null, chatId: chat.id, ts: Date.now() });
     }
   }
 
@@ -1171,7 +1413,12 @@ module.exports = {
   getPendingChats,
   getAllChats,
   getChatInfo,
+  getChatForSession,
+  resolveChatRouting,
   updateChat,
+  updateChatRouting,
+  updateChatBotState,
+  autoAssignChatByWorkflow,
   
   // Mensajes
   logMessage,

@@ -1,34 +1,51 @@
 /**
  * Servicio de WhatsApp
- * Maneja la conexión y envío de mensajes
+ * Ahora funciona como un manager multi-conexion sobre whatsapp-web.js.
  */
 
+const fs = require('fs');
+const path = require('path');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const QRCode = require('qrcode');
 const logger = require('../config/logger');
 const { v4: uuidv4 } = require('uuid');
+const inboxSettingsService = require('./clientInboxSettings.service');
+const whatsappConnectionService = require('./whatsappConnection.service');
+const { createForbiddenError } = require('../middlewares/auth');
 
-class WhatsAppService {
-  constructor() {
+const AUTH_BASE_DIR = path.join(__dirname, '../../data/wwebjs_auth');
+
+if (!fs.existsSync(AUTH_BASE_DIR)) {
+  fs.mkdirSync(AUTH_BASE_DIR, { recursive: true });
+}
+
+class WhatsAppRuntime {
+  constructor(connection, onEvent) {
+    this.connection = connection;
+    this.onEvent = onEvent;
     this.client = null;
     this.isReady = false;
     this.qrCode = null;
-    this.status = 'disconnected';
-    this.messageQueue = [];
-    this.eventHandlers = new Map();
+    this.status = connection?.status || 'disconnected';
+    this.initializing = null;
   }
 
-  /**
-   * Inicializa el cliente de WhatsApp
-   */
+  get authClientId() {
+    return `wa_${this.connection.id}`;
+  }
+
   async initialize() {
-    return new Promise((resolve, reject) => {
+    if (this.initializing) return this.initializing;
+
+    this.initializing = new Promise((resolve, reject) => {
       this.client = new Client({
         authStrategy: new LocalAuth({
-          clientId: process.env.SESSION_NAME || 'whatsapp-session'
+          clientId: this.authClientId,
+          dataPath: AUTH_BASE_DIR,
         }),
         puppeteer: {
+          executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
           headless: process.env.HEADLESS !== 'false',
           args: [
             '--no-sandbox',
@@ -37,312 +54,449 @@ class WhatsAppService {
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
             '--no-zygote',
-            '--disable-gpu'
-          ]
-        }
+            '--disable-gpu',
+          ],
+        },
       });
 
-      // Evento QR
       this.client.on('qr', async (qr) => {
         this.status = 'qr_pending';
         this.qrCode = qr;
-        logger.info('Código QR generado. Escanéalo con WhatsApp');
         qrcode.generate(qr, { small: true });
-        this.emit('qr', qr);
+        await this.persistState({
+          status: 'qr_pending',
+          lastQr: await QRCode.toDataURL(qr),
+          qrExpiresAt: new Date(Date.now() + 60 * 1000).toISOString(),
+          sessionPath: path.join(AUTH_BASE_DIR, `session-${this.authClientId}`),
+        });
+        this.onEvent('qr', { connectionId: this.connection.id, qr });
       });
 
-      // Cliente listo
-      this.client.on('ready', () => {
+      this.client.on('ready', async () => {
         this.isReady = true;
         this.status = 'connected';
         this.qrCode = null;
-        logger.info('✅ WhatsApp conectado y listo');
-        this.emit('ready');
+        await this.persistState({
+          status: 'connected',
+          lastQr: null,
+          qrExpiresAt: null,
+          sessionPath: path.join(AUTH_BASE_DIR, `session-${this.authClientId}`),
+        });
+        logger.info(`✅ WhatsApp conectado: ${this.connection.sessionName} (${this.connection.phone})`);
+        this.onEvent('ready', { connectionId: this.connection.id });
         resolve();
       });
 
-      // Autenticado
-      this.client.on('authenticated', () => {
+      this.client.on('authenticated', async () => {
         this.status = 'authenticated';
-        logger.info('✅ Autenticación exitosa');
-        this.emit('authenticated');
+        await this.persistState({ status: 'authenticated' });
+        this.onEvent('authenticated', { connectionId: this.connection.id });
       });
 
-      // Fallo de autenticación
-      this.client.on('auth_failure', (msg) => {
+      this.client.on('auth_failure', async (msg) => {
         this.status = 'auth_failed';
-        logger.error('❌ Error de autenticación:', msg);
-        this.emit('auth_failure', msg);
-        reject(new Error('Fallo de autenticación'));
+        await this.persistState({ status: 'auth_failed' });
+        logger.error(`❌ Error de autenticacion en ${this.connection.sessionName}:`, msg);
+        this.onEvent('auth_failure', { connectionId: this.connection.id, message: msg });
+        reject(new Error('Fallo de autenticacion'));
       });
 
-      // Desconectado
-      this.client.on('disconnected', (reason) => {
+      this.client.on('disconnected', async (reason) => {
         this.isReady = false;
         this.status = 'disconnected';
-        logger.warn('WhatsApp desconectado:', reason);
-        this.emit('disconnected', reason);
+        await this.persistState({ status: 'disconnected' });
+        logger.warn(`WhatsApp desconectado (${this.connection.sessionName}): ${reason}`);
+        this.onEvent('disconnected', { connectionId: this.connection.id, reason });
       });
 
-      // Mensaje recibido
       this.client.on('message', async (message) => {
-        // Registrar mensaje en el sistema de chat sessions
-        await this.handleIncomingMessage(message);
-        this.emit('message', message);
+        this.onEvent('message', { connectionId: this.connection.id, message, connection: this.connection });
       });
 
-      // ACK de mensajes (entregado / leído)
       this.client.on('message_ack', async (msg, ack) => {
-        try {
-          const chatSessionService = require('./chatSession.service');
-          const phone = (msg.to || msg.from || msg.id?.remote || '').replace(/@.+/, '').replace(/\D/g, '');
-          chatSessionService.updateMessageAck(msg.id?._serialized, ack, phone);
-        } catch (e) {
-          logger.warn('No se pudo actualizar ACK:', e.message);
-        }
+        this.onEvent('message_ack', { connectionId: this.connection.id, msg, ack, connection: this.connection });
       });
 
-      // Iniciar cliente
       this.client.initialize().catch((error) => {
-        logger.error('Error al inicializar WhatsApp:', error);
+        logger.error(`Error al inicializar WhatsApp ${this.connection.sessionName}:`, error);
         reject(error);
       });
 
-      // Timeout para la inicialización
       setTimeout(() => {
-        if (!this.isReady && this.status !== 'qr_pending') {
-          resolve(); // Resuelve de todas formas para no bloquear el servidor
+        if (!this.isReady) {
+          resolve();
         }
       }, 30000);
+    }).finally(() => {
+      this.initializing = null;
     });
+
+    return this.initializing;
   }
 
-  /**
-   * Obtiene el estado actual del servicio
-   */
+  async persistState(updates) {
+    try {
+      const next = await whatsappConnectionService.update(this.connection.id, updates);
+      if (next) {
+        this.connection = next;
+      }
+    } catch (error) {
+      logger.warn(`No se pudo persistir estado de la conexion ${this.connection.id}: ${error.message}`);
+    }
+  }
+
   getStatus() {
     return {
+      connectionId: this.connection.id,
+      clientId: this.connection.clientId,
+      phone: this.connection.phone,
+      sessionName: this.connection.sessionName,
       status: this.status,
       isReady: this.isReady,
-      hasQR: !!this.qrCode
+      hasQR: !!this.qrCode,
     };
   }
 
-  /**
-   * Obtiene el código QR como imagen base64
-   */
   async getQRCode() {
-    if (!this.qrCode) {
-      return null;
-    }
-    return await QRCode.toDataURL(this.qrCode);
+    if (!this.qrCode) return this.connection.lastQr || null;
+    return QRCode.toDataURL(this.qrCode);
   }
 
-  /**
-   * Formatea el número de teléfono al formato de WhatsApp
-   */
   formatPhoneNumber(phone) {
-    // Remover caracteres no numéricos
-    let cleaned = phone.toString().replace(/\D/g, '');
-    
-    // Agregar sufijo de WhatsApp
+    let cleaned = String(phone || '').replace(/\D/g, '');
     if (!cleaned.endsWith('@c.us')) {
       cleaned = `${cleaned}@c.us`;
     }
-    
     return cleaned;
   }
 
-  /**
-   * Verifica si un número está registrado en WhatsApp
-   */
-  async isRegistered(phone) {
-    if (!this.isReady) {
-      throw new Error('WhatsApp no está conectado');
+  ensureReady() {
+    if (!this.client || !this.isReady) {
+      throw new Error('WhatsApp no esta conectado');
     }
-
-    const formattedPhone = this.formatPhoneNumber(phone);
-    const result = await this.client.isRegisteredUser(formattedPhone);
-    return result;
   }
 
-  /**
-   * Envía un mensaje de texto
-   */
-  async sendMessage(phone, message, options = {}) {
-    if (!this.isReady) {
-      throw new Error('WhatsApp no está conectado');
-    }
+  async isRegistered(phone) {
+    this.ensureReady();
+    return this.client.isRegisteredUser(this.formatPhoneNumber(phone));
+  }
 
+  async sendMessage(phone, message, options = {}) {
+    this.ensureReady();
     const formattedPhone = this.formatPhoneNumber(phone);
     const messageId = uuidv4();
 
-    try {
-      logger.info(`Enviando mensaje a ${phone}`);
+    const numberId = await this.client.getNumberId(formattedPhone);
+    if (!numberId) {
+      throw new Error('El numero no esta registrado en WhatsApp');
+    }
 
-      // Validar que el número existe en WhatsApp (evita "No LID for user")
-      const numberId = await this.client.getNumberId(formattedPhone);
-      if (!numberId) {
-        throw new Error('El número no está registrado en WhatsApp');
+    const result = await this.client.sendMessage(formattedPhone, message, options);
+    return {
+      messageId,
+      whatsappId: result.id._serialized,
+      phone,
+      status: 'sent',
+      timestamp: new Date().toISOString(),
+      connectionId: this.connection.id,
+    };
+  }
+
+  async sendImage(phone, imageUrl, caption = '') {
+    this.ensureReady();
+    const media = await MessageMedia.fromUrl(imageUrl);
+    const result = await this.client.sendMessage(this.formatPhoneNumber(phone), media, { caption });
+    return {
+      messageId: uuidv4(),
+      whatsappId: result.id._serialized,
+      phone,
+      type: 'image',
+      status: 'sent',
+      timestamp: new Date().toISOString(),
+      connectionId: this.connection.id,
+    };
+  }
+
+  async sendMedia(phone, mimeType, base64Data, filename = 'file', options = {}) {
+    this.ensureReady();
+    const media = new MessageMedia(mimeType, base64Data, filename);
+    const result = await this.client.sendMessage(this.formatPhoneNumber(phone), media, {
+      sendMediaAsSticker: options.asSticker === true,
+    });
+    return {
+      messageId: uuidv4(),
+      whatsappId: result.id._serialized,
+      phone,
+      type: options.asSticker ? 'sticker' : mimeType.startsWith('image/') ? 'image' : 'document',
+      status: 'sent',
+      timestamp: new Date().toISOString(),
+      connectionId: this.connection.id,
+    };
+  }
+
+  async sendDocument(phone, documentUrl, filename, caption = '') {
+    this.ensureReady();
+    const media = await MessageMedia.fromUrl(documentUrl);
+    media.filename = filename;
+    const result = await this.client.sendMessage(this.formatPhoneNumber(phone), media, { caption });
+    return {
+      messageId: uuidv4(),
+      whatsappId: result.id._serialized,
+      phone,
+      type: 'document',
+      filename,
+      status: 'sent',
+      timestamp: new Date().toISOString(),
+      connectionId: this.connection.id,
+    };
+  }
+
+  async sendImageBase64(phone, base64Data, mimetype, caption = '') {
+    this.ensureReady();
+    const media = new MessageMedia(mimetype, base64Data);
+    const result = await this.client.sendMessage(this.formatPhoneNumber(phone), media, { caption });
+    return {
+      messageId: uuidv4(),
+      whatsappId: result.id._serialized,
+      phone,
+      type: 'image',
+      status: 'sent',
+      timestamp: new Date().toISOString(),
+      connectionId: this.connection.id,
+    };
+  }
+
+  async getContactInfo(phone) {
+    this.ensureReady();
+    const contact = await this.client.getContactById(this.formatPhoneNumber(phone));
+    return {
+      id: contact.id._serialized,
+      name: contact.name || contact.pushname,
+      number: contact.number,
+      isUser: contact.isUser,
+      isGroup: contact.isGroup,
+      isBlocked: contact.isBlocked,
+      connectionId: this.connection.id,
+    };
+  }
+
+  async getProfile() {
+    this.ensureReady();
+    const info = this.client.info;
+    return {
+      name: info.pushname,
+      phone: info.wid.user,
+      platform: info.platform,
+      connectionId: this.connection.id,
+    };
+  }
+
+  async logout() {
+    if (this.client) {
+      await this.client.logout();
+      this.isReady = false;
+      this.status = 'disconnected';
+      await this.persistState({ status: 'disconnected' });
+    }
+  }
+
+  async destroy() {
+    if (this.client) {
+      await this.client.destroy();
+      this.client = null;
+      this.isReady = false;
+      this.status = 'disconnected';
+      await this.persistState({ status: 'disconnected' });
+    }
+  }
+}
+
+class WhatsAppMultiService {
+  constructor() {
+    this.runtimes = new Map();
+    this.eventHandlers = new Map();
+  }
+
+  async initialize() {
+    const connections = await whatsappConnectionService.list();
+    if (!connections.length) {
+      logger.warn('No hay conexiones de WhatsApp registradas. El motor multi-sesion queda en espera.');
+      return;
+    }
+
+    await Promise.allSettled(
+      connections.map(async (connection) => {
+        const runtime = this.ensureRuntime(connection);
+        await runtime.initialize();
+      })
+    );
+  }
+
+  ensureRuntime(connection) {
+    const current = this.runtimes.get(connection.id);
+    if (current) {
+      current.connection = connection;
+      return current;
+    }
+
+    const runtime = new WhatsAppRuntime(connection, (event, payload) => this.handleRuntimeEvent(event, payload));
+    this.runtimes.set(connection.id, runtime);
+    return runtime;
+  }
+
+  async initializeConnection(connectionId) {
+    const connection = await whatsappConnectionService.getById(connectionId);
+    if (!connection) {
+      throw new Error('Conexion no encontrada');
+    }
+    const runtime = this.ensureRuntime(connection);
+    await runtime.initialize();
+    return runtime.getStatus();
+  }
+
+  async removeConnection(connectionId) {
+    const runtime = this.runtimes.get(connectionId);
+    if (runtime) {
+      await runtime.destroy();
+      this.runtimes.delete(connectionId);
+    }
+  }
+
+  async refreshConnections() {
+    const connections = await whatsappConnectionService.list();
+    for (const connection of connections) {
+      this.ensureRuntime(connection);
+    }
+    return connections;
+  }
+
+  async resolveRuntime(options = {}) {
+    const { connectionId = null, clientId = null, authClientId = null, isMaster = false } = options;
+    const effectiveClientId = isMaster
+      ? String(clientId || '').trim() || null
+      : String(authClientId || clientId || '').trim() || null;
+
+    if (connectionId) {
+      const ownedConnection = isMaster
+        ? await whatsappConnectionService.getById(connectionId)
+        : await whatsappConnectionService.getByIdForClient(connectionId, effectiveClientId);
+
+      if (!ownedConnection) {
+        throw createForbiddenError('La conexión solicitada no pertenece al tenant autenticado', 'CONNECTION_FORBIDDEN');
       }
 
-      const result = await this.client.sendMessage(formattedPhone, message, options);
-      
-      logger.info(`✅ Mensaje enviado: ${messageId}`);
-      
-      return {
-        messageId,
-        whatsappId: result.id._serialized,
-        phone: phone,
-        status: 'sent',
-        timestamp: new Date().toISOString()
-      };
-    } catch (error) {
-      logger.error(`❌ Error al enviar mensaje: ${error.message}`);
-      throw error;
+      const direct = this.ensureRuntime(ownedConnection);
+      if (direct.client || direct.isReady) return direct;
+      await direct.initialize();
+      return direct;
     }
+
+    if (!effectiveClientId) {
+      throw new Error('No hay un tenant disponible para resolver la conexión de WhatsApp');
+    }
+
+    const settings = inboxSettingsService.getClientSettings(effectiveClientId);
+    const preferredIds = [
+      settings.defaultConnectionId,
+      ...(settings.groups || []).map((group) => group.connectionId).filter(Boolean),
+    ].filter(Boolean);
+
+    for (const preferredId of preferredIds) {
+      const runtime = this.runtimes.get(preferredId);
+      if (runtime?.isReady) return runtime;
+    }
+
+    for (const runtime of this.runtimes.values()) {
+      if (runtime.connection.clientId === effectiveClientId && runtime.isReady) return runtime;
+    }
+
+    for (const runtime of this.runtimes.values()) {
+      if (runtime.connection.clientId === effectiveClientId) {
+        if (!runtime.client) {
+          await runtime.initialize();
+        }
+        if (runtime.isReady) return runtime;
+      }
+    }
+
+    throw new Error('No hay conexiones de WhatsApp disponibles para este cliente');
   }
 
-  /**
-   * Envía un mensaje con imagen
-   */
-  async sendImage(phone, imageUrl, caption = '') {
-    if (!this.isReady) {
-      throw new Error('WhatsApp no está conectado');
+  async getVisibleStatus(options = {}) {
+    const { connectionId = null, clientId = null, authClientId = null, isMaster = false } = options;
+
+    if (connectionId) {
+      const runtime = await this.resolveRuntime({ connectionId, clientId, authClientId, isMaster });
+      return runtime.getStatus();
     }
 
-    const formattedPhone = this.formatPhoneNumber(phone);
-    const messageId = uuidv4();
+    const effectiveClientId = isMaster
+      ? String(clientId || '').trim() || null
+      : String(authClientId || clientId || '').trim() || null;
 
-    try {
-      logger.info(`Enviando imagen a ${phone}`);
-      
-      const media = await MessageMedia.fromUrl(imageUrl);
-      const result = await this.client.sendMessage(formattedPhone, media, { caption });
-      
-      logger.info(`✅ Imagen enviada: ${messageId}`);
-      
-      return {
-        messageId,
-        whatsappId: result.id._serialized,
-        phone: phone,
-        type: 'image',
-        status: 'sent',
-        timestamp: new Date().toISOString()
-      };
-    } catch (error) {
-      logger.error(`❌ Error al enviar imagen: ${error.message}`);
-      throw error;
-    }
+    const statuses = Array.from(this.runtimes.values())
+      .filter((runtime) => !effectiveClientId || runtime.connection.clientId === effectiveClientId)
+      .map((runtime) => runtime.getStatus());
+
+    return {
+      totalConnections: statuses.length,
+      connected: statuses.filter((status) => status.isReady).length,
+      connections: statuses,
+    };
   }
 
-  /**
-   * Envía un media (imagen/documento) a partir de base64
-   */
+  getStatus(connectionId = null) {
+    if (connectionId) {
+      const runtime = this.runtimes.get(connectionId);
+      return runtime ? runtime.getStatus() : { status: 'disconnected', isReady: false, hasQR: false };
+    }
+
+    const statuses = Array.from(this.runtimes.values()).map((runtime) => runtime.getStatus());
+    return {
+      totalConnections: statuses.length,
+      connected: statuses.filter((status) => status.isReady).length,
+      connections: statuses,
+    };
+  }
+
+  async getQRCode(options = {}) {
+    const runtime = await this.resolveRuntime(options);
+    return runtime.getQRCode();
+  }
+
+  async isRegistered(phone, options = {}) {
+    const runtime = await this.resolveRuntime(options);
+    return runtime.isRegistered(phone);
+  }
+
+  async sendMessage(phone, message, options = {}) {
+    const runtime = await this.resolveRuntime(options);
+    return runtime.sendMessage(phone, message, options);
+  }
+
+  async sendImage(phone, imageUrl, caption = '', options = {}) {
+    const runtime = await this.resolveRuntime(options);
+    return runtime.sendImage(phone, imageUrl, caption);
+  }
+
   async sendMedia(phone, mimeType, base64Data, filename = 'file', options = {}) {
-    if (!this.isReady) {
-      throw new Error('WhatsApp no está conectado');
-    }
-
-    const formattedPhone = this.formatPhoneNumber(phone);
-    const messageId = uuidv4();
-
-    try {
-      const media = new MessageMedia(mimeType, base64Data, filename);
-      const result = await this.client.sendMessage(formattedPhone, media, {
-        sendMediaAsSticker: options.asSticker === true,
-      });
-
-      logger.info(`🖼️ Media enviado: ${messageId}`);
-
-      return {
-        messageId,
-        whatsappId: result.id._serialized,
-        phone,
-        type: options.asSticker ? 'sticker' : mimeType.startsWith('image/') ? 'image' : 'document',
-        status: 'sent',
-        timestamp: new Date().toISOString()
-      };
-    } catch (error) {
-      logger.error(`❌ Error al enviar media: ${error.message}`);
-      throw error;
-    }
+    const runtime = await this.resolveRuntime(options);
+    return runtime.sendMedia(phone, mimeType, base64Data, filename, options);
   }
 
-  /**
-   * Envía un documento
-   */
-  async sendDocument(phone, documentUrl, filename, caption = '') {
-    if (!this.isReady) {
-      throw new Error('WhatsApp no está conectado');
-    }
-
-    const formattedPhone = this.formatPhoneNumber(phone);
-    const messageId = uuidv4();
-
-    try {
-      logger.info(`Enviando documento a ${phone}`);
-      
-      const media = await MessageMedia.fromUrl(documentUrl);
-      media.filename = filename;
-      
-      const result = await this.client.sendMessage(formattedPhone, media, { caption });
-      
-      logger.info(`✅ Documento enviado: ${messageId}`);
-      
-      return {
-        messageId,
-        whatsappId: result.id._serialized,
-        phone: phone,
-        type: 'document',
-        filename,
-        status: 'sent',
-        timestamp: new Date().toISOString()
-      };
-    } catch (error) {
-      logger.error(`❌ Error al enviar documento: ${error.message}`);
-      throw error;
-    }
+  async sendDocument(phone, documentUrl, filename, caption = '', options = {}) {
+    const runtime = await this.resolveRuntime(options);
+    return runtime.sendDocument(phone, documentUrl, filename, caption);
   }
 
-  /**
-   * Envía imagen desde base64
-   */
-  async sendImageBase64(phone, base64Data, mimetype, caption = '') {
-    if (!this.isReady) {
-      throw new Error('WhatsApp no está conectado');
-    }
-
-    const formattedPhone = this.formatPhoneNumber(phone);
-    const messageId = uuidv4();
-
-    try {
-      logger.info(`Enviando imagen base64 a ${phone}`);
-      
-      const media = new MessageMedia(mimetype, base64Data);
-      const result = await this.client.sendMessage(formattedPhone, media, { caption });
-      
-      return {
-        messageId,
-        whatsappId: result.id._serialized,
-        phone: phone,
-        type: 'image',
-        status: 'sent',
-        timestamp: new Date().toISOString()
-      };
-    } catch (error) {
-      logger.error(`❌ Error al enviar imagen base64: ${error.message}`);
-      throw error;
-    }
+  async sendImageBase64(phone, base64Data, mimetype, caption = '', options = {}) {
+    const runtime = await this.resolveRuntime(options);
+    return runtime.sendImageBase64(phone, base64Data, mimetype, caption);
   }
 
-  /**
-   * Envía mensajes a múltiples destinatarios
-   */
   async sendBulkMessages(recipients, message, options = {}) {
     const results = [];
-    const delay = options.delay || 2000; // 2 segundos entre mensajes
-
+    const delay = options.delay || 2000;
     for (const phone of recipients) {
       try {
         const result = await this.sendMessage(phone, message, options);
@@ -350,80 +504,87 @@ class WhatsAppService {
       } catch (error) {
         results.push({ phone, success: false, error: error.message });
       }
-      
-      // Esperar entre mensajes para evitar bloqueos
+
       if (recipients.indexOf(phone) < recipients.length - 1) {
         await this.sleep(delay);
       }
     }
-
     return results;
   }
 
-  /**
-   * Obtiene información del contacto
-   */
-  async getContactInfo(phone) {
-    if (!this.isReady) {
-      throw new Error('WhatsApp no está conectado');
-    }
-
-    const formattedPhone = this.formatPhoneNumber(phone);
-    const contact = await this.client.getContactById(formattedPhone);
-    
-    return {
-      id: contact.id._serialized,
-      name: contact.name || contact.pushname,
-      number: contact.number,
-      isUser: contact.isUser,
-      isGroup: contact.isGroup,
-      isBlocked: contact.isBlocked
-    };
+  async getContactInfo(phone, options = {}) {
+    const runtime = await this.resolveRuntime(options);
+    return runtime.getContactInfo(phone);
   }
 
-  /**
-   * Obtiene información del perfil conectado
-   */
-  async getProfile() {
-    if (!this.isReady) {
-      throw new Error('WhatsApp no está conectado');
-    }
-
-    const info = this.client.info;
-    return {
-      name: info.pushname,
-      phone: info.wid.user,
-      platform: info.platform
-    };
+  async getProfile(options = {}) {
+    const runtime = await this.resolveRuntime(options);
+    return runtime.getProfile();
   }
 
-  /**
-   * Cierra la sesión de WhatsApp
-   */
-  async logout() {
-    if (this.client) {
-      await this.client.logout();
-      this.isReady = false;
-      this.status = 'disconnected';
-      logger.info('Sesión cerrada correctamente');
+  async logout(options = {}) {
+    const { connectionId = null, clientId = null, authClientId = null, isMaster = false } = options;
+
+    if (connectionId) {
+      const runtime = await this.resolveRuntime({ connectionId, clientId, authClientId, isMaster });
+      await runtime.logout();
+      return;
     }
+
+    const effectiveClientId = isMaster
+      ? String(clientId || '').trim() || null
+      : String(authClientId || clientId || '').trim() || null;
+    const runtimes = Array.from(this.runtimes.values()).filter(
+      (runtime) => !effectiveClientId || runtime.connection.clientId === effectiveClientId
+    );
+    await Promise.all(runtimes.map((runtime) => runtime.logout()));
   }
 
-  /**
-   * Destruye el cliente
-   */
-  async destroy() {
-    if (this.client) {
-      await this.client.destroy();
-      this.isReady = false;
-      this.status = 'disconnected';
-      logger.info('Cliente destruido correctamente');
+  async restart(options = {}) {
+    const { connectionId = null, clientId = null, authClientId = null, isMaster = false } = options;
+
+    if (connectionId) {
+      const runtime = await this.resolveRuntime({ connectionId, clientId, authClientId, isMaster });
+      await runtime.destroy();
+      await runtime.initialize();
+      return runtime.getStatus();
     }
+
+    const effectiveClientId = isMaster
+      ? String(clientId || '').trim() || null
+      : String(authClientId || clientId || '').trim() || null;
+    const connections = await whatsappConnectionService.list(effectiveClientId);
+
+    await this.destroy({ clientId, authClientId, isMaster });
+    await Promise.allSettled(
+      connections.map(async (connection) => {
+        const runtime = this.ensureRuntime(connection);
+        await runtime.initialize();
+      })
+    );
+    return this.getVisibleStatus({ clientId, authClientId, isMaster });
   }
 
-  /**
-   * Registra un manejador de eventos
-   */
+  async destroy(options = {}) {
+    const { connectionId = null, clientId = null, authClientId = null, isMaster = false } = options;
+
+    if (connectionId) {
+      const runtime = await this.resolveRuntime({ connectionId, clientId, authClientId, isMaster });
+      if (runtime) {
+        await runtime.destroy();
+      }
+      return;
+    }
+
+    const effectiveClientId = isMaster
+      ? String(clientId || '').trim() || null
+      : String(authClientId || clientId || '').trim() || null;
+    const runtimes = Array.from(this.runtimes.values()).filter(
+      (runtime) => !effectiveClientId || runtime.connection.clientId === effectiveClientId
+    );
+    await Promise.all(runtimes.map((runtime) => runtime.destroy()));
+  }
+
   on(event, handler) {
     if (!this.eventHandlers.has(event)) {
       this.eventHandlers.set(event, []);
@@ -431,45 +592,77 @@ class WhatsAppService {
     this.eventHandlers.get(event).push(handler);
   }
 
-  /**
-   * Emite un evento
-   */
   emit(event, data) {
     const handlers = this.eventHandlers.get(event) || [];
-    handlers.forEach(handler => handler(data));
+    handlers.forEach((handler) => handler(data));
   }
 
-  /**
-   * Función de espera
-   */
+  async handleRuntimeEvent(event, payload) {
+    if (event === 'message') {
+      await this.handleIncomingMessage(payload.message, payload.connection);
+      this.emit('message', payload);
+      return;
+    }
+
+    if (event === 'message_ack') {
+      try {
+        const chatSessionService = require('./chatSession.service');
+        const msg = payload.msg;
+        const phone = (msg.to || msg.from || msg.id?.remote || '').replace(/@.+/, '').replace(/\D/g, '');
+        chatSessionService.updateMessageAck(msg.id?._serialized, payload.ack, phone, payload.connection?.id || null);
+      } catch (error) {
+        logger.warn(`No se pudo actualizar ACK: ${error.message}`);
+      }
+      this.emit('message_ack', payload);
+      return;
+    }
+
+    this.emit(event, payload);
+  }
+
   sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  /**
-   * Maneja mensajes entrantes y los registra en el sistema de chat sessions
-   */
-  async handleIncomingMessage(message) {
+  async handleIncomingMessage(message, connection) {
     try {
-      // Importar dinámicamente para evitar dependencia circular
       const chatSessionService = require('./chatSession.service');
-
-      // Obtener contacto para resolver el número real (evita IDs LID)
       const contact = await message.getContact();
       const rawNumber = contact?.number || message.from || '';
       const phone = rawNumber.replace(/\D/g, '');
+      const clientId = connection?.clientId || 'client_1';
+      const targetGroup = inboxSettingsService.resolveGroupForConnection(clientId, connection?.id || null);
 
-      // Ignorar mensajes de grupos o broadcasts
       if (message.from.includes('@g.us') || message.from.includes('@broadcast')) {
         return;
       }
 
-      // Registrar o actualizar el chat con el número real
-      chatSessionService.registerChat(phone, {
-        customerName: contact?.pushname || contact?.name || message._data?.notifyName || null
+      const chat = chatSessionService.registerChat(phone, {
+        customerName: contact?.pushname || contact?.name || message._data?.notifyName || null,
+        connectionId: connection?.id || null,
+        groupId: targetGroup?.id || null,
+        workflow: targetGroup?.workflow || 'manual',
       });
 
-      // Determinar tipo de mensaje
+      if (targetGroup) {
+        chatSessionService.updateChatRouting(chat.id, {
+          connectionId: connection?.id || targetGroup.connectionId || null,
+          groupId: targetGroup.id,
+          workflow: targetGroup.workflow || 'manual',
+        });
+
+        if (
+          chat.status === 'pending' &&
+          !chat.sessionId &&
+          Array.isArray(targetGroup.sessionIds) &&
+          targetGroup.sessionIds.length &&
+          targetGroup.workflow &&
+          targetGroup.workflow !== 'manual'
+        ) {
+          chatSessionService.autoAssignChatByWorkflow(chat.id, targetGroup.sessionIds, targetGroup.workflow);
+        }
+      }
+
       let messageType = 'text';
       let content = message.body;
 
@@ -481,7 +674,6 @@ class WhatsAppService {
         else if (message.type === 'video') messageType = 'video';
         else messageType = 'media';
 
-        // intentar descargar el media entrante y guardarlo como data URL
         try {
           const media = await message.downloadMedia();
           if (media?.data && media?.mimetype) {
@@ -489,27 +681,119 @@ class WhatsAppService {
           } else {
             throw new Error('downloadMedia returned empty data');
           }
-        } catch (e) {
-          logger.warn(`No se pudo descargar media entrante (${message.type}): ${e.message}`);
-          // Fallback: deja al menos una etiqueta legible para la UI
+        } catch (error) {
+          logger.warn(`No se pudo descargar media entrante (${message.type}): ${error.message}`);
           content = message.body || `[${messageType.toUpperCase()}]`;
         }
       }
 
-      // Registrar el mensaje
       chatSessionService.logMessage(phone, {
         direction: 'incoming',
-        content: content,
+        content,
         type: messageType,
-        whatsappId: message.id._serialized
+        whatsappId: message.id._serialized,
+        chatId: chat.id,
+        connectionId: connection?.id || null,
       });
 
-      logger.debug(`📨 Mensaje entrante registrado de ${phone}`);
+      await this.handlePreAssignmentBot(phone, message.body || '', connection);
+      logger.debug(`📨 Mensaje entrante registrado de ${phone} en conexion ${connection?.id || 'n/a'}`);
     } catch (error) {
       logger.error('Error registrando mensaje entrante:', error);
     }
   }
+
+  async handlePreAssignmentBot(phone, messageText, connection) {
+    try {
+      const chatSessionService = require('./chatSession.service');
+      const clientId = connection?.clientId || 'client_1';
+      const chat = chatSessionService.getChatInfo(phone, { connectionId: connection?.id || null });
+
+      if (!chat || chat.status !== 'pending' || chat.sessionId) return;
+
+      const targetGroup = inboxSettingsService.resolveGroupForConnection(clientId, connection?.id || null, chat.groupId || chat.botState?.groupId || null);
+
+      if (!targetGroup || !targetGroup.chatbotEnabled) return;
+
+      const customerName = chat.customerName?.trim() || chat.phone;
+      const normalizedText = String(messageText || '').toLowerCase();
+      const handoffKeywords = String(settings.handoffKeywords || '')
+        .split(',')
+        .map((keyword) => keyword.trim().toLowerCase())
+        .filter(Boolean);
+
+      const resolveTemplate = (template) =>
+        String(template || '')
+          .replace(/\[NOMBRE CLIENTE\]/gi, customerName)
+          .replace(/\[NOMBRE DEL AGENTE\]/gi, 'Asistente virtual');
+
+      const sendBotMessage = async (contentToSend, statePatch = {}) => {
+        const result = await this.sendMessage(phone, contentToSend, {
+          connectionId: connection?.id || targetGroup.connectionId || null,
+          clientId,
+        });
+        chatSessionService.logMessage(phone, {
+          direction: 'outgoing',
+          content: contentToSend,
+          type: 'text',
+          chatId: chat.id,
+          agentName: 'Chatbot',
+          whatsappId: result.whatsappId,
+          ack: 0,
+          connectionId: result.connectionId || null,
+        });
+        chatSessionService.updateChatBotState(chat.id, {
+          groupId: targetGroup.id,
+          lastBotReplyAt: new Date().toISOString(),
+          ...statePatch,
+        });
+      };
+
+      if (!chat.botState?.welcomeSentAt) {
+        await sendBotMessage(resolveTemplate(targetGroup.welcomeMessage), {
+          welcomeSentAt: new Date().toISOString(),
+        });
+        return;
+      }
+
+      if (handoffKeywords.some((keyword) => normalizedText.includes(keyword))) {
+        if (!chat.botState?.handoffSentAt) {
+          await sendBotMessage(resolveTemplate(targetGroup.handoffMessage), {
+            handoffSentAt: new Date().toISOString(),
+          });
+        }
+        if (
+          Array.isArray(targetGroup.sessionIds) &&
+          targetGroup.sessionIds.length &&
+          targetGroup.workflow &&
+          targetGroup.workflow !== 'manual'
+        ) {
+          chatSessionService.autoAssignChatByWorkflow(chat.id, targetGroup.sessionIds, targetGroup.workflow);
+        }
+        return;
+      }
+
+      const matchedRule = (targetGroup.keywordRules || []).find((rule) =>
+        String(rule.keywords || '')
+          .split(',')
+          .map((keyword) => keyword.trim().toLowerCase())
+          .filter(Boolean)
+          .some((keyword) => normalizedText.includes(keyword))
+      );
+
+      if (matchedRule) {
+        await sendBotMessage(resolveTemplate(matchedRule.response));
+        return;
+      }
+
+      const lastBotReplyAt = chat.botState?.lastBotReplyAt ? new Date(chat.botState.lastBotReplyAt).getTime() : 0;
+      if (!lastBotReplyAt || Date.now() - lastBotReplyAt > 3 * 60 * 1000) {
+        await sendBotMessage(resolveTemplate(targetGroup.fallbackMessage));
+      }
+    } catch (error) {
+      logger.warn(`No se pudo procesar chatbot previo a agente: ${error.message}`);
+    }
+  }
 }
 
-// Singleton
-module.exports = new WhatsAppService();
+module.exports = new WhatsAppMultiService();

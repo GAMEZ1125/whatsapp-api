@@ -5,6 +5,29 @@
 const swaggerJsdoc = require('swagger-jsdoc');
 const swaggerUi = require('swagger-ui-express');
 
+const configuredBaseUrl = process.env.APP_BASE_URL?.trim();
+const servers = configuredBaseUrl
+  ? [
+      {
+        url: configuredBaseUrl,
+        description: 'Servidor desplegado'
+      },
+      {
+        url: 'http://localhost:3000',
+        description: 'Servidor local (Desarrollo)'
+      }
+    ]
+  : [
+      {
+        url: 'http://gamez-solutions.ddns.net:3000',
+        description: 'Servidor DDNS (Producción)'
+      },
+      {
+        url: 'http://localhost:3000',
+        description: 'Servidor local (Desarrollo)'
+      }
+    ];
+
 const options = {
   definition: {
     openapi: '3.0.0',
@@ -35,16 +58,7 @@ const options = {
         email: 'soporte@gamez-solutions.com'
       }
     },
-    servers: [
-      {
-        url: 'http://gamez-solutions.ddns.net:3000',
-        description: 'Servidor DDNS (Producción)'
-      },
-      {
-        url: 'http://localhost:3000',
-        description: 'Servidor local (Desarrollo)'
-      }
-    ],
+    servers,
     tags: [
       {
         name: 'Session',

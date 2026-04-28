@@ -1,6 +1,7 @@
 const { v4: uuidv4 } = require('uuid');
 const logger = require('../config/logger');
 const { pool } = require('../config/db');
+const clientService = require('./client.service');
 
 const USERS_TABLE = 'Users';
 
@@ -22,6 +23,26 @@ const ensureUserTable = async () => {
   `;
 
   await pool.execute(createTableQuery);
+  await pool.execute(`
+    ALTER TABLE ${USERS_TABLE}
+    ADD COLUMN IF NOT EXISTS clientId CHAR(36) NULL AFTER apiKey
+  `);
+};
+
+const backfillUserClientIds = async () => {
+  const [rows] = await pool.execute(
+    `SELECT id, clientId, clientName FROM ${USERS_TABLE} WHERE (clientId IS NULL OR clientId = '') AND clientName IS NOT NULL AND clientName <> ''`
+  );
+
+  for (const row of rows) {
+    const resolvedClientId = await clientService.resolveClientId(row.clientName);
+    if (!resolvedClientId) continue;
+
+    await pool.execute(
+      `UPDATE ${USERS_TABLE} SET clientId = ? WHERE id = ?`,
+      [resolvedClientId, row.id]
+    );
+  }
 };
 
 const seedDefaultUsers = async () => {
@@ -72,10 +93,11 @@ const seedDefaultUsers = async () => {
   ];
 
   for (const user of defaultUsers) {
+    const resolvedClientId = await clientService.resolveClientId(user.clientName || null);
     await pool.execute(
       `
-        INSERT INTO ${USERS_TABLE} (id, name, email, role, status, apiKey, clientName, chatsAssigned, lastActivity)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO ${USERS_TABLE} (id, name, email, role, status, apiKey, clientId, clientName, chatsAssigned, lastActivity)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         uuidv4(),
@@ -84,6 +106,7 @@ const seedDefaultUsers = async () => {
         user.role,
         user.status,
         user.apiKey,
+        resolvedClientId,
         user.clientName,
         user.chatsAssigned,
         new Date(),
@@ -114,6 +137,11 @@ const buildFilters = (filters = {}) => {
     values.push(filters.status);
   }
 
+  if (filters.clientId) {
+    whereClauses.push('clientId = ?');
+    values.push(filters.clientId);
+  }
+
   return {
     whereClause: whereClauses.length ? `WHERE ${whereClauses.join(' AND ')}` : '',
     values,
@@ -129,7 +157,7 @@ const listUsers = async (filters = {}) => {
 
   const [rows] = await pool.execute(
     `
-      SELECT id, name, email, role, status, apiKey, clientName, chatsAssigned, lastActivity, createdAt, updatedAt
+      SELECT id, name, email, role, status, apiKey, clientId, clientName, chatsAssigned, lastActivity, createdAt, updatedAt
       FROM ${USERS_TABLE}
       ${whereClause}
       ORDER BY createdAt DESC
@@ -152,8 +180,16 @@ const listUsers = async (filters = {}) => {
   };
 };
 
-const getUserById = async (id) => {
-  const [rows] = await pool.execute(`SELECT * FROM ${USERS_TABLE} WHERE id = ?`, [id]);
+const getUserById = async (id, filters = {}) => {
+  const whereClauses = ['id = ?'];
+  const values = [id];
+
+  if (filters.clientId) {
+    whereClauses.push('clientId = ?');
+    values.push(filters.clientId);
+  }
+
+  const [rows] = await pool.execute(`SELECT * FROM ${USERS_TABLE} WHERE ${whereClauses.join(' AND ')}`, values);
   return rows[0] || null;
 };
 
@@ -169,6 +205,7 @@ const getUserByApiKey = async (apiKey) => {
 
 const createUser = async (payload) => {
   const id = uuidv4();
+  const resolvedClientId = await clientService.resolveClientId(payload.clientId || payload.clientName || null);
 
   // evita duplicados por email
   const existing = await getUserByEmail(payload.email);
@@ -181,8 +218,8 @@ const createUser = async (payload) => {
   try {
     await pool.execute(
       `
-        INSERT INTO ${USERS_TABLE} (id, name, email, role, status, apiKey, clientName, chatsAssigned, lastActivity)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO ${USERS_TABLE} (id, name, email, role, status, apiKey, clientId, clientName, chatsAssigned, lastActivity)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         id,
@@ -191,6 +228,7 @@ const createUser = async (payload) => {
         payload.role,
         payload.status || 'active',
         payload.apiKey || null,
+        resolvedClientId,
         payload.clientName || null,
         payload.chatsAssigned || 0,
         payload.lastActivity || null,
@@ -208,9 +246,18 @@ const createUser = async (payload) => {
   return getUserById(id);
 };
 
-const updateUser = async (id, updates) => {
+const updateUser = async (id, updates, filters = {}) => {
+  const existingUser = await getUserById(id, filters);
+  if (!existingUser) {
+    const error = new Error('Usuario no encontrado');
+    error.code = 'USER_NOT_FOUND';
+    throw error;
+  }
+
   const fields = [];
   const values = [];
+  let nextClientName = updates.clientName;
+  let nextClientId = updates.clientId;
 
   if (updates.name) {
     fields.push('name = ?');
@@ -242,6 +289,11 @@ const updateUser = async (id, updates) => {
     values.push(updates.clientName);
   }
 
+  if (updates.clientId !== undefined) {
+    fields.push('clientId = ?');
+    values.push(updates.clientId);
+  }
+
   if (updates.chatsAssigned !== undefined) {
     fields.push('chatsAssigned = ?');
     values.push(updates.chatsAssigned);
@@ -256,6 +308,19 @@ const updateUser = async (id, updates) => {
     throw new Error('No hay campos para actualizar');
   }
 
+  if (updates.clientName !== undefined || updates.clientId !== undefined) {
+    nextClientName = nextClientName !== undefined ? nextClientName : existingUser?.clientName;
+    nextClientId = await clientService.resolveClientId(nextClientId || nextClientName || existingUser?.clientId || null);
+
+    if (fields.includes('clientId = ?')) {
+      const clientIdIndex = fields.indexOf('clientId = ?');
+      values[clientIdIndex] = nextClientId;
+    } else {
+      fields.push('clientId = ?');
+      values.push(nextClientId);
+    }
+  }
+
   values.push(id);
 
   await pool.execute(
@@ -267,17 +332,26 @@ const updateUser = async (id, updates) => {
     values
   );
 
-  return getUserById(id);
+  return getUserById(id, filters);
 };
 
-const deleteUser = async (id) => {
-  const [result] = await pool.execute(`DELETE FROM ${USERS_TABLE} WHERE id = ?`, [id]);
+const deleteUser = async (id, filters = {}) => {
+  const whereClauses = ['id = ?'];
+  const values = [id];
+
+  if (filters.clientId) {
+    whereClauses.push('clientId = ?');
+    values.push(filters.clientId);
+  }
+
+  const [result] = await pool.execute(`DELETE FROM ${USERS_TABLE} WHERE ${whereClauses.join(' AND ')}`, values);
   return result.affectedRows > 0;
 };
 
 const initialize = async () => {
   await ensureUserTable();
   await seedDefaultUsers();
+  await backfillUserClientIds();
 };
 
 module.exports = {

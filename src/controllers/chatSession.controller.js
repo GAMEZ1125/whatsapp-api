@@ -525,22 +525,45 @@ const sendMessageAsAgent = async (req, res) => {
       });
     }
 
+    const chat = chatSessionService.getChatForSession(session.id, phone) || chatSessionService.getChatInfo(phone);
+
     // Verificar acceso al chat
-    if (!chatSessionService.hasAccessToChat(session.id, phone)) {
+    if (!chat || !chatSessionService.hasAccessToChat(session.id, chat.id)) {
       return res.status(403).json({
         success: false,
         error: 'No tienes acceso a este chat. Primero debes tomarlo.'
       });
     }
 
+    const routing = chatSessionService.resolveChatRouting(chat.id, req.user?.clientId || 'client_1');
+    if (!routing.success) {
+      return res.status(400).json({
+        success: false,
+        error: `${routing.error} Configura o vincula una conexión en Ajustes y asígnala al grupo correspondiente.`,
+      });
+    }
+
+    if (!chat.connectionId && routing.data?.connectionId) {
+      chatSessionService.updateChatRouting(chat.id, {
+        connectionId: routing.data.connectionId,
+        groupId: routing.data.groupId || chat.groupId || null,
+        workflow: routing.data.workflow || chat.workflow || 'manual',
+      });
+    }
+
     // Enviar mensaje
-    const result = await whatsappService.sendMessage(phone, message);
+    const result = await whatsappService.sendMessage(chat.phone, message, {
+      connectionId: routing.data.connectionId || chat.connectionId || null,
+      clientId: req.user?.clientId || 'client_1',
+    });
 
     // Registrar mensaje
-    chatSessionService.logMessage(phone, {
+    chatSessionService.logMessage(chat.phone, {
       direction: 'outgoing',
       content: message,
       type: 'text',
+      chatId: chat.id,
+      connectionId: routing.data.connectionId || chat.connectionId || result.connectionId || null,
       sessionId: session.id,
       agentName: session.agentName,
       whatsappId: result.whatsappId,
@@ -584,25 +607,47 @@ const sendMediaAsAgent = async (req, res) => {
       });
     }
 
-    if (!chatSessionService.hasAccessToChat(session.id, phone)) {
+    const chat = chatSessionService.getChatForSession(session.id, phone) || chatSessionService.getChatInfo(phone);
+
+    if (!chat || !chatSessionService.hasAccessToChat(session.id, chat.id)) {
       return res.status(403).json({
         success: false,
         error: 'No tienes acceso a este chat. Primero debes tomarlo.'
       });
     }
 
-    const result = await whatsappService.sendMedia(phone, mimeType, base64, fileName || 'file', {
+    const routing = chatSessionService.resolveChatRouting(chat.id, req.user?.clientId || 'client_1');
+    if (!routing.success) {
+      return res.status(400).json({
+        success: false,
+        error: `${routing.error} Configura o vincula una conexión en Ajustes y asígnala al grupo correspondiente.`,
+      });
+    }
+
+    if (!chat.connectionId && routing.data?.connectionId) {
+      chatSessionService.updateChatRouting(chat.id, {
+        connectionId: routing.data.connectionId,
+        groupId: routing.data.groupId || chat.groupId || null,
+        workflow: routing.data.workflow || chat.workflow || 'manual',
+      });
+    }
+
+    const result = await whatsappService.sendMedia(chat.phone, mimeType, base64, fileName || 'file', {
       asSticker: asSticker === true,
+      connectionId: routing.data.connectionId || chat.connectionId || null,
+      clientId: req.user?.clientId || 'client_1',
     });
 
     const contentForUI = mimeType.startsWith('image/')
       ? `data:${mimeType};base64,${base64}`
       : (fileName || 'documento');
 
-    chatSessionService.logMessage(phone, {
+    chatSessionService.logMessage(chat.phone, {
       direction: 'outgoing',
       content: contentForUI,
       type: asSticker ? 'sticker' : mimeType.startsWith('image/') ? 'image' : 'document',
+      chatId: chat.id,
+      connectionId: routing.data.connectionId || chat.connectionId || result.connectionId || null,
       sessionId: session.id,
       agentName: session.agentName,
       whatsappId: result.whatsappId,

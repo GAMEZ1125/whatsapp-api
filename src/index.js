@@ -16,8 +16,10 @@ const rateLimit = require('express-rate-limit');
 const logger = require('./config/logger');
 const swaggerSetup = require('./config/swagger');
 const whatsappService = require('./services/whatsapp.service');
+const apikeyService = require('./services/apikey.service');
 const userService = require('./services/user.service');
 const chatSessionService = require('./services/chatSession.service');
+const whatsappConnectionService = require('./services/whatsappConnection.service');
 const routes = require('./routes');
 const errorHandler = require('./middlewares/errorHandler');
 
@@ -63,12 +65,12 @@ swaggerSetup(app);
 app.use('/api', routes);
 
 // Ruta de salud
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
   res.json({
     success: true,
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    whatsapp: whatsappService.getStatus()
+    whatsapp: await whatsappService.getVisibleStatus({ isMaster: true })
   });
 });
 
@@ -88,11 +90,15 @@ const startServer = async () => {
   try {
     // Inicializar servicios
     logger.info('Iniciando servicio de WhatsApp...');
+    await apikeyService.initialize();
+    await whatsappConnectionService.initialize();
     await whatsappService.initialize();
     await userService.initialize();
     autoChatTimer = setInterval(async () => {
       try {
-        await chatSessionService.runAutoChatRules((phone, message) => whatsappService.sendMessage(phone, message));
+        await chatSessionService.runAutoChatRules((phone, message, options = {}) =>
+          whatsappService.sendMessage(phone, message, options)
+        );
       } catch (automationError) {
         logger.error('Error ejecutando automatizaciones de chat:', automationError);
       }

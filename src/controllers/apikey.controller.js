@@ -1,16 +1,18 @@
 const apikeyService = require('../services/apikey.service');
 const logger = require('../config/logger');
+const clientService = require('../services/client.service');
 
 const createApiKey = async (req, res) => {
   try {
     const { name, description, permissions, clientId, plan } = req.body;
     if (!name) return res.status(400).json({ success: false, error: 'El nombre es requerido' });
+    const resolvedClientId = clientId ? await clientService.resolveClientId(clientId) : null;
 
     const newKeyRes = await apikeyService.createApiKey({
       name,
       description,
       permissions,
-      clientId: clientId || null,
+      clientId: resolvedClientId,
       plan: plan || null,
     });
     const newKey = newKeyRes.data;
@@ -24,7 +26,7 @@ const createApiKey = async (req, res) => {
         name,
         description,
         permissions,
-        clientId: clientId || null,
+        clientId: resolvedClientId,
         plan: plan || null,
       },
     });
@@ -34,9 +36,9 @@ const createApiKey = async (req, res) => {
   }
 };
 
-const listApiKeys = async (_req, res) => {
+const listApiKeys = async (req, res) => {
   try {
-    const keysRes = await apikeyService.listApiKeys(false);
+    const keysRes = await apikeyService.listApiKeys({ clientId: req.query.clientId || null }, false);
     const keys = keysRes.data || [];
     res.json({ success: true, data: keys, total: keys.length });
   } catch (error) {
@@ -48,14 +50,14 @@ const listApiKeys = async (_req, res) => {
 const getApiKey = async (req, res) => {
   try {
     const { id } = req.params;
-    const key = await apikeyService.getApiKeyById(id, false);
+    const key = await apikeyService.getApiKeyById(id, true);
     if (!key) return res.status(404).json({ success: false, error: 'API Key no encontrada' });
 
     res.json({
       success: true,
       data: {
         id: key.id,
-        key: `${key.key.substring(0, 12)}...${key.key.slice(-4)}`,
+        key: apikeyService.maskApiKey(key.key),
         name: key.name,
         description: key.description,
         permissions: key.permissions,
@@ -131,9 +133,7 @@ const deleteApiKey = async (req, res) => {
 const regenerateApiKey = async (req, res) => {
   try {
     const { id } = req.params;
-    // Crear una nueva key y sobreescribir valor
-    const newKeyRes = await apikeyService.createApiKey({ ...(req.body || {}), id });
-    await apikeyService.updateApiKey(id, { active: true, key: newKeyRes.data.key });
+    const newKeyRes = await apikeyService.regenerateApiKey(id);
 
     res.json({
       success: true,

@@ -9,6 +9,11 @@ node_modules/
 # WhatsApp session data
 .wwebjs_auth/
 .wwebjs_cache/
+data/wwebjs_auth/
+data/wwebjs_cache/
+
+# Runtime local data
+data/chat-sessions.json
 
 # Logs
 logs/

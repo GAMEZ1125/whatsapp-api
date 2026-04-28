@@ -6,6 +6,35 @@
 const logger = require('../config/logger');
 const apikeyService = require('../services/apikey.service');
 const chatSessionService = require('../services/chatSession.service');
+const clientService = require('../services/client.service');
+
+const createForbiddenError = (message, code = 'TENANT_FORBIDDEN') => {
+  const error = new Error(message);
+  error.statusCode = 403;
+  error.code = code;
+  return error;
+};
+
+const resolveTenantAccess = (req, requestedClientId = null) => {
+  const normalizedRequestedClientId = String(requestedClientId || '').trim() || null;
+  const isMaster = req.apiKeyInfo?.isMaster || req.user?.role === 'superadmin';
+  const authenticatedClientId = req.user?.clientId || req.apiKeyInfo?.clientId || null;
+
+  if (isMaster) {
+    return normalizedRequestedClientId;
+  }
+
+  if (!authenticatedClientId) {
+    if (normalizedRequestedClientId) return normalizedRequestedClientId;
+    throw createForbiddenError('La API Key no está asociada a un tenant', 'TENANT_REQUIRED');
+  }
+
+  if (normalizedRequestedClientId && normalizedRequestedClientId !== authenticatedClientId) {
+    throw createForbiddenError('No puedes operar sobre un tenant distinto al autenticado');
+  }
+
+  return authenticatedClientId;
+};
 
 /**
  * Verifica la API Key en los headers
@@ -18,6 +47,7 @@ const apiKeyAuth = async (req, res, next) => {
   if (!process.env.API_KEY && process.env.NODE_ENV === 'development') {
     logger.warn('⚠️ API Key no configurada - Modo desarrollo');
     req.apiKeyInfo = { isMaster: true, permissions: ['*'] };
+    req.user = { role: 'superadmin', clientId: null };
     return next();
   }
 
@@ -39,11 +69,12 @@ const apiKeyAuth = async (req, res, next) => {
       const user = await userService.getUserByApiKey(apiKey);
 
       if (user) {
+        const tenantId = await clientService.resolveClientId(user.clientId || user.clientName || null);
         keyInfo = {
           id: user.id,
           name: user.name,
           role: user.role,
-          clientId: user.clientId,
+          clientId: tenantId,
           permissions: (user.role === 'superadmin' || user.role === 'admin' || user.role === 'supervisor') ? ['*'] : ['chat:read', 'chat:write'],
           isUser: true
         };
@@ -65,7 +96,9 @@ const apiKeyAuth = async (req, res, next) => {
   // Agregar info de la key al request
   req.apiKeyInfo = keyInfo;
   if (keyInfo.clientId) {
-    req.user = { role: keyInfo.role || 'admin', clientId: keyInfo.clientId };
+    req.user = { role: keyInfo.role || 'tenant', clientId: keyInfo.clientId };
+  } else if (keyInfo.isMaster) {
+    req.user = { role: 'superadmin', clientId: null };
   }
   next();
 };
@@ -82,6 +115,7 @@ const masterKeyAuth = (req, res, next) => {
   if (!masterKey && process.env.NODE_ENV === 'development') {
     logger.warn('⚠️ Master Key no configurada - Modo desarrollo');
     req.apiKeyInfo = { isMaster: true, permissions: ['*'] };
+    req.user = { role: 'superadmin', clientId: null };
     return next();
   }
 
@@ -103,6 +137,7 @@ const masterKeyAuth = (req, res, next) => {
   }
 
   req.apiKeyInfo = { isMaster: true, permissions: ['*'] };
+  req.user = { role: 'superadmin', clientId: null };
   next();
 };
 
@@ -118,6 +153,7 @@ const chatSessionAuth = async (req, res, next) => {
   if (!masterKey && process.env.NODE_ENV === 'development') {
     logger.warn('⚠️ Modo desarrollo - Sin autenticación');
     req.apiKeyInfo = { isMaster: true, permissions: ['*'] };
+    req.user = { role: 'superadmin', clientId: null };
     return next();
   }
 
@@ -132,6 +168,7 @@ const chatSessionAuth = async (req, res, next) => {
   // 1. Verificar si es Master Key
   if (apiKey === masterKey) {
     req.apiKeyInfo = { isMaster: true, permissions: ['*'] };
+    req.user = { role: 'superadmin', clientId: null };
     return next();
   }
 
@@ -162,15 +199,16 @@ const chatSessionAuth = async (req, res, next) => {
     const user = await userService.getUserByApiKey(apiKey);
 
     if (user) {
+      const tenantId = await clientService.resolveClientId(user.clientId || user.clientName || null);
       req.apiKeyInfo = {
         id: user.id,
         name: user.name,
         role: user.role,
-        clientId: user.clientId,
+        clientId: tenantId,
         permissions: (user.role === 'superadmin' || user.role === 'admin' || user.role === 'supervisor') ? ['*'] : ['chat:read'],
         isUser: true
       };
-      req.user = { role: user.role, clientId: user.clientId };
+      req.user = { role: user.role, clientId: tenantId };
       return next();
     }
   } catch (error) {
@@ -244,5 +282,7 @@ module.exports = {
   masterKeyAuth,
   chatSessionAuth,
   optionalAuth,
-  requirePermission
+  requirePermission,
+  resolveTenantAccess,
+  createForbiddenError,
 };

@@ -7,7 +7,14 @@
  */
 
 const whatsappService = require('../services/whatsapp.service');
-const logger = require('../config/logger');
+const { resolveTenantAccess } = require('../middlewares/auth');
+
+const getRuntimeOptions = (req) => ({
+  connectionId: req.body?.connectionId || null,
+  clientId: resolveTenantAccess(req, req.body?.clientId || null),
+  authClientId: req.user?.clientId || null,
+  isMaster: !!req.apiKeyInfo?.isMaster,
+});
 
 /**
  * @swagger
@@ -66,7 +73,7 @@ const sendMessage = async (req, res, next) => {
   try {
     const { phone, message } = req.body;
     
-    const result = await whatsappService.sendMessage(phone, message);
+    const result = await whatsappService.sendMessage(phone, message, getRuntimeOptions(req));
     
     res.json({
       success: true,
@@ -124,9 +131,9 @@ const sendImage = async (req, res, next) => {
     let result;
     
     if (base64 && mimetype) {
-      result = await whatsappService.sendImageBase64(phone, base64, mimetype, caption);
+      result = await whatsappService.sendImageBase64(phone, base64, mimetype, caption, getRuntimeOptions(req));
     } else if (imageUrl) {
-      result = await whatsappService.sendImage(phone, imageUrl, caption);
+      result = await whatsappService.sendImage(phone, imageUrl, caption, getRuntimeOptions(req));
     } else {
       return res.status(400).json({
         success: false,
@@ -183,7 +190,7 @@ const sendDocument = async (req, res, next) => {
   try {
     const { phone, documentUrl, filename, caption } = req.body;
     
-    const result = await whatsappService.sendDocument(phone, documentUrl, filename, caption);
+    const result = await whatsappService.sendDocument(phone, documentUrl, filename, caption, getRuntimeOptions(req));
     
     res.json({
       success: true,
@@ -233,7 +240,10 @@ const sendBulkMessages = async (req, res, next) => {
   try {
     const { recipients, message, delay } = req.body;
     
-    const results = await whatsappService.sendBulkMessages(recipients, message, { delay });
+    const results = await whatsappService.sendBulkMessages(recipients, message, {
+      ...getRuntimeOptions(req),
+      delay,
+    });
     
     const successful = results.filter(r => r.success).length;
     const failed = results.filter(r => !r.success).length;

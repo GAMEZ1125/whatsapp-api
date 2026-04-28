@@ -1,132 +1,154 @@
-# 📱 WhatsApp API Engine
+# WhatsApp API Engine
 
-Motor de envío de mensajes por WhatsApp - API REST profesional y escalable.
+API REST para integrar WhatsApp en multiples proyectos dentro del mismo entorno, con aislamiento por tenant mediante `clientId`, conexiones dedicadas y API keys separadas.
 
-## 🚀 Características
+## Que resuelve esta version
 
-- ✅ Envío de mensajes de texto
-- ✅ Envío de imágenes (URL o Base64)
-- ✅ Envío de documentos
-- ✅ Envío masivo de mensajes
-- ✅ Verificación de números en WhatsApp
-- ✅ Gestión de sesión (QR, estado, logout)
-- ✅ Sistema de Webhooks para eventos
-- ✅ Autenticación por API Key
-- ✅ Rate limiting
-- ✅ Documentación Swagger
-- ✅ Logging completo
+- Una sola instancia de la API puede atender varios clientes.
+- Cada tenant usa su propia `API Key`.
+- Cada tenant puede tener una o varias conexiones de WhatsApp.
+- Las operaciones quedan limitadas al `clientId` autenticado.
+- La `Master Key` sigue existiendo para aprovisionamiento global.
 
-## 📋 Requisitos
+## Arquitectura multitenant
 
-- Node.js >= 18.0.0
-- npm o yarn
-- Google Chrome o Chromium (para puppeteer)
+- `Master Key`:
+  administra tenants, API keys y conexiones de cualquier cliente.
+- `Tenant API Key`:
+  solo puede operar sobre los recursos asociados a su `clientId`.
+- `Users API Key`:
+  reutiliza el mismo aislamiento por tenant para consola interna, supervisores o agentes.
 
-## 🛠️ Instalación
+## Flujo recomendado para integrar un nuevo proyecto
+
+1. Crear o identificar el registro del cliente en la tabla `clients`.
+2. Generar una `API Key` dedicada para ese `clientId`.
+3. Crear al menos una conexion de WhatsApp para ese mismo `clientId`.
+4. Escanear el QR de la conexion.
+5. Consumir la API desde el proyecto externo usando solo esa `API Key`.
+
+## Requisitos
+
+- Node.js 18+
+- MySQL
+- Google Chrome o Chromium
+
+## Instalacion
 
 ```bash
-# Clonar o copiar el proyecto
-cd whatsapp-api
-
-# Instalar dependencias
 npm install
-
-# Configurar variables de entorno
-cp .env.example .env
-
-# Editar .env con tus configuraciones
+copy .env.example .env
 ```
 
-## ⚙️ Configuración
-
-Edita el archivo `.env`:
+## Variables de entorno
 
 ```env
 PORT=3000
 NODE_ENV=development
-API_KEY=tu-api-key-segura
-SESSION_NAME=mi-sesion
+ALLOWED_ORIGINS=*
+
+API_KEY=tu-master-key-segura
+
+DB_HOST=localhost
+DB_PORT=3306
+DB_NAME=api_whatsapp
+DB_USER=root
+DB_PASSWORD=
+DB_POOL_LIMIT=10
+
+HEADLESS=true
+RATE_LIMIT_WINDOW_MS=900000
+RATE_LIMIT_MAX_REQUESTS=100
+LOG_LEVEL=info
 ```
 
-## 🚀 Ejecución
+## Ejecucion
 
 ```bash
-# Modo desarrollo (con hot reload)
 npm run dev
-
-# Modo producción
-npm start
 ```
 
-## 📖 Documentación API
+Swagger:
 
-Una vez iniciado el servidor, accede a:
-- **Swagger UI**: http://localhost:3000/api-docs
-- **Health Check**: http://localhost:3000/health
+- `http://localhost:3000/api-docs`
 
-## 🔐 Autenticación
+Health:
 
-Todas las solicitudes requieren el header `X-API-Key`:
+- `http://localhost:3000/health`
+
+## Aprovisionar un tenant nuevo
+
+### 1. Crear API key del tenant
+
+Usa la `Master Key`.
 
 ```bash
-curl -X GET http://localhost:3000/api/session/status \
-  -H "X-API-Key: tu-api-key"
+curl -X POST http://localhost:3000/api/auth/keys ^
+  -H "Content-Type: application/json" ^
+  -H "X-API-Key: TU_MASTER_KEY" ^
+  -d "{\"name\":\"ERP Produccion\",\"description\":\"Integracion tenant Acme\",\"clientId\":\"CLIENT_ID_ACME\",\"permissions\":[\"*\"]}"
 ```
 
-## 📡 Endpoints Principales
+Respuesta esperada:
 
-### Sesión
+```json
+{
+  "success": true,
+  "data": {
+    "id": "uuid",
+    "key": "wapi_..."
+  }
+}
+```
 
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| GET | `/api/session/status` | Estado de la conexión |
-| GET | `/api/session/qr` | Obtener código QR (base64) |
-| GET | `/api/session/qr/image` | Obtener QR como imagen |
-| GET | `/api/session/profile` | Información del perfil |
-| POST | `/api/session/logout` | Cerrar sesión |
-| POST | `/api/session/restart` | Reiniciar conexión |
+Guarda esa key. No se debe compartir entre tenants.
 
-### Mensajes
+### 2. Crear conexion de WhatsApp para ese tenant
 
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| POST | `/api/messages/send` | Enviar mensaje de texto |
-| POST | `/api/messages/send-image` | Enviar imagen |
-| POST | `/api/messages/send-document` | Enviar documento |
-| POST | `/api/messages/send-bulk` | Envío masivo |
+Puedes hacerlo con la `Master Key` o con una key autenticada de ese tenant.
 
-### Contactos
+```bash
+curl -X POST http://localhost:3000/api/whatsapp-connections ^
+  -H "Content-Type: application/json" ^
+  -H "X-API-Key: TU_MASTER_KEY" ^
+  -d "{\"clientId\":\"CLIENT_ID_ACME\",\"phone\":\"573001234567\",\"sessionName\":\"acme-main\"}"
+```
 
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| GET | `/api/contacts/check/:phone` | Verificar número |
-| POST | `/api/contacts/check-bulk` | Verificar varios números |
-| GET | `/api/contacts/info/:phone` | Info de contacto |
+### 3. Obtener QR y vincular la cuenta
 
-### Webhooks
+```bash
+curl "http://localhost:3000/api/session/qr?connectionId=CONNECTION_ID_ACME" ^
+  -H "X-API-Key: TU_API_KEY_DEL_TENANT"
+```
 
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| POST | `/api/webhooks/register` | Registrar webhook |
-| GET | `/api/webhooks` | Listar webhooks |
-| DELETE | `/api/webhooks/:id` | Eliminar webhook |
-| POST | `/api/webhooks/:id/toggle` | Activar/desactivar |
+### 4. Verificar estado
 
-## 📱 Ejemplos de Uso
+```bash
+curl "http://localhost:3000/api/session/status?connectionId=CONNECTION_ID_ACME" ^
+  -H "X-API-Key: TU_API_KEY_DEL_TENANT"
+```
 
-### Enviar mensaje de texto
+## Integracion desde otros proyectos
+
+Cada proyecto externo solo necesita:
+
+- URL base de esta API
+- `X-API-Key` del tenant
+- Opcionalmente `connectionId` si el tenant tiene varias lineas
+
+### Ejemplo Node.js
 
 ```javascript
-// JavaScript/Node.js
 const response = await fetch('http://localhost:3000/api/messages/send', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
-    'X-API-Key': 'tu-api-key'
+    'X-API-Key': process.env.WHATSAPP_TENANT_API_KEY
   },
   body: JSON.stringify({
     phone: '573001234567',
-    message: 'Hola, este es un mensaje de prueba'
+    message: 'Hola desde otro sistema',
+    connectionId: 'CONNECTION_ID_ACME'
   })
 });
 
@@ -134,141 +156,141 @@ const data = await response.json();
 console.log(data);
 ```
 
-### Enviar imagen
-
-```javascript
-const response = await fetch('http://localhost:3000/api/messages/send-image', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'X-API-Key': 'tu-api-key'
-  },
-  body: JSON.stringify({
-    phone: '573001234567',
-    imageUrl: 'https://ejemplo.com/imagen.jpg',
-    caption: 'Mira esta imagen'
-  })
-});
-```
-
-### Python
-
-```python
-import requests
-
-url = "http://localhost:3000/api/messages/send"
-headers = {
-    "Content-Type": "application/json",
-    "X-API-Key": "tu-api-key"
-}
-payload = {
-    "phone": "573001234567",
-    "message": "Hola desde Python!"
-}
-
-response = requests.post(url, json=payload, headers=headers)
-print(response.json())
-```
-
-### PHP
+### Ejemplo PHP
 
 ```php
 <?php
-$url = 'http://localhost:3000/api/messages/send';
-$data = [
-    'phone' => '573001234567',
-    'message' => 'Hola desde PHP!'
+$payload = [
+  'phone' => '573001234567',
+  'message' => 'Hola desde PHP',
+  'connectionId' => 'CONNECTION_ID_ACME'
 ];
 
 $options = [
-    'http' => [
-        'method' => 'POST',
-        'header' => [
-            'Content-Type: application/json',
-            'X-API-Key: tu-api-key'
-        ],
-        'content' => json_encode($data)
-    ]
+  'http' => [
+    'method' => 'POST',
+    'header' => [
+      'Content-Type: application/json',
+      'X-API-Key: ' . getenv('WHATSAPP_TENANT_API_KEY')
+    ],
+    'content' => json_encode($payload)
+  ]
 ];
 
 $context = stream_context_create($options);
-$response = file_get_contents($url, false, $context);
+$response = file_get_contents('http://localhost:3000/api/messages/send', false, $context);
 echo $response;
 ```
 
-### cURL
+### Ejemplo Python
+
+```python
+import os
+import requests
+
+response = requests.post(
+    "http://localhost:3000/api/messages/send",
+    headers={
+        "Content-Type": "application/json",
+        "X-API-Key": os.environ["WHATSAPP_TENANT_API_KEY"],
+    },
+    json={
+        "phone": "573001234567",
+        "message": "Hola desde Python",
+        "connectionId": "CONNECTION_ID_ACME",
+    },
+)
+
+print(response.json())
+```
+
+## Reglas de aislamiento
+
+- Un tenant no puede consultar conexiones de otro tenant.
+- Un tenant no puede usar `clientId` de otro cliente en `query` o `body`.
+- Un tenant no puede reiniciar, cerrar sesion o pedir QR de una conexion ajena.
+- Las rutas de usuarios quedan filtradas por `clientId`.
+
+## Endpoints clave para integracion
+
+### Sesion
+
+- `GET /api/session/status`
+- `GET /api/session/qr`
+- `GET /api/session/profile`
+- `POST /api/session/logout`
+- `POST /api/session/restart`
+
+### Mensajes
+
+- `POST /api/messages/send`
+- `POST /api/messages/send-image`
+- `POST /api/messages/send-document`
+- `POST /api/messages/send-bulk`
+
+### Contactos
+
+- `GET /api/contacts/check/:phone`
+- `POST /api/contacts/check-bulk`
+- `GET /api/contacts/info/:phone`
+
+### Administracion multitenant
+
+- `POST /api/auth/keys`
+- `GET /api/auth/keys`
+- `POST /api/whatsapp-connections`
+- `GET /api/whatsapp-connections`
+- `GET /api/whatsapp-connections/admin-config`
+
+## Recomendaciones para nuevos proyectos
+
+- Guarda la `API Key` del tenant en variables de entorno del proyecto consumidor.
+- Si el tenant tiene varias lineas, define un `connectionId` fijo por flujo de negocio.
+- No uses la `Master Key` desde apps cliente.
+- Si expones esta API por internet, restringe `ALLOWED_ORIGINS` y protege la infraestructura.
+
+## Despliegue en Heroku
+
+Base tecnica del deploy:
+
+- `Procfile`: `web: npm start`
+- Node fijado a `24.x`
+- Chrome configurable con `PUPPETEER_EXECUTABLE_PATH`
+
+Pasos con Heroku CLI:
 
 ```bash
-curl -X POST http://localhost:3000/api/messages/send \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: tu-api-key" \
-  -d '{"phone":"573001234567","message":"Hola desde cURL!"}'
+heroku login
+heroku create tu-app-whatsapp
+heroku buildpacks:add -i 1 heroku-community/chrome-for-testing -a tu-app-whatsapp
+heroku buildpacks:add -i 2 heroku/nodejs -a tu-app-whatsapp
+heroku config:set NODE_ENV=production -a tu-app-whatsapp
+heroku config:set HEADLESS=true -a tu-app-whatsapp
+heroku config:set PUPPETEER_EXECUTABLE_PATH=chrome -a tu-app-whatsapp
+heroku config:set API_KEY=tu-master-key -a tu-app-whatsapp
+heroku config:set DB_HOST=tu-host -a tu-app-whatsapp
+heroku config:set DB_PORT=3306 -a tu-app-whatsapp
+heroku config:set DB_NAME=tu-base -a tu-app-whatsapp
+heroku config:set DB_USER=tu-usuario -a tu-app-whatsapp
+heroku config:set DB_PASSWORD=tu-password -a tu-app-whatsapp
+git push heroku main
 ```
 
-## 🔔 Webhooks
+Verifica:
 
-Registra un webhook para recibir notificaciones:
-
-```javascript
-await fetch('http://localhost:3000/api/webhooks/register', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'X-API-Key': 'tu-api-key'
-  },
-  body: JSON.stringify({
-    url: 'https://tuapp.com/webhook',
-    events: ['message', 'ready', 'disconnected'],
-    secret: 'mi-secreto-para-firmar'
-  })
-});
+```bash
+heroku open -a tu-app-whatsapp
+heroku logs --tail -a tu-app-whatsapp
 ```
 
-Eventos disponibles:
-- `qr` - Nuevo código QR generado
-- `ready` - Cliente listo
-- `authenticated` - Autenticación exitosa
-- `disconnected` - Desconectado
-- `message` - Mensaje recibido
+Limitacion importante:
 
-## 🐳 Docker (Opcional)
+- Heroku usa filesystem efimero. La carpeta `data/wwebjs_auth` puede perderse entre reinicios o redeploys.
+- Eso significa que las sesiones QR de WhatsApp no son confiables en Heroku si sigues usando `LocalAuth`.
+- Para produccion real, conviene migrar la persistencia de sesion a almacenamiento externo o mover este servicio a una plataforma con disco persistente.
 
-```dockerfile
-FROM node:18-slim
+## Notas operativas
 
-# Instalar dependencias de Chrome
-RUN apt-get update && apt-get install -y \
-    chromium \
-    --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY . .
-
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-
-EXPOSE 3000
-CMD ["npm", "start"]
-```
-
-## 📝 Notas Importantes
-
-1. **Primer inicio**: Al iniciar por primera vez, se generará un código QR. Escanéalo con WhatsApp.
-
-2. **Sesión persistente**: La sesión se guarda en `.wwebjs_auth/`. No borres esta carpeta para mantener la sesión.
-
-3. **Rate limiting**: Por defecto, 100 solicitudes cada 15 minutos por IP.
-
-4. **Envío masivo**: Usa delays entre mensajes para evitar bloqueos de WhatsApp.
-
-5. **Formato de teléfono**: Incluye código de país sin '+' (ej: 573001234567).
-
-## 🤝 Contribuir
-
-Las contribuciones son bienvenidas. Por favor, abre un issue primero para discutir cambios mayores.
-
-## 📄 Licencia
-
-MIT License
+- Las sesiones de WhatsApp se persisten en `data/wwebjs_auth`.
+- La base de datos es compartida, pero los recursos se filtran por tenant.
+- Si un tenant cambia de numero o de linea, puedes crear una nueva conexion sin desplegar otra instancia.
