@@ -27,6 +27,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const eagerWhatsAppInit = String(process.env.WHATSAPP_EAGER_INIT || 'false').toLowerCase() === 'true';
 let autoChatTimer = null;
+const trustProxyEnv = process.env.TRUST_PROXY;
 const allowedOriginsRaw = String(process.env.ALLOWED_ORIGINS || '*').trim();
 const allowAnyOrigin = !allowedOriginsRaw || allowedOriginsRaw === '*';
 const allowedOrigins = allowAnyOrigin
@@ -35,6 +36,14 @@ const allowedOrigins = allowAnyOrigin
       .split(',')
       .map((origin) => origin.trim())
       .filter(Boolean);
+
+if (typeof trustProxyEnv !== 'undefined') {
+  const parsedTrustProxy = Number.parseInt(trustProxyEnv, 10);
+  app.set('trust proxy', Number.isNaN(parsedTrustProxy) ? trustProxyEnv : parsedTrustProxy);
+} else if (process.env.DYNO) {
+  // En Heroku hay proxy inverso; confiar en 1 salto evita errores de rate-limit con X-Forwarded-For.
+  app.set('trust proxy', 1);
+}
 
 const corsOptions = {
   origin(origin, callback) {
