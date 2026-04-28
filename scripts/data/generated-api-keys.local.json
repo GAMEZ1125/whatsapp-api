@@ -1,0 +1,44 @@
+[
+  {
+    "createdAt": "2026-04-27T22:32:48",
+    "apiBaseUrl": "https://ancient-ocean-78301-96aad9a4957a.herokuapp.com",
+    "clientId": "ee3b97d0-1239-11f1-a227-f0038cd89556",
+    "id": "d540e774-d091-4428-912c-d839c747bd5b",
+    "name": "GalaxiaTech",
+    "description": "",
+    "plan": null,
+    "permissions": [
+      "*"
+    ],
+    "apiKey": "wapi_d26d9e6cbccc49769d1102a6afe28764"
+  },
+  {
+    "createdAt": "2026-04-27T22:59:02",
+    "apiBaseUrl": "https://ancient-ocean-78301-96aad9a4957a.herokuapp.com",
+    "clientId": "ee3b97d0-1239-11f1-a227-f0038cd89556",
+    "apiKeyId": "b2e0cddc-c253-41a4-aa75-d72f50e1db45",
+    "name": "GalaxiaTech",
+    "description": "",
+    "plan": null,
+    "permissions": [
+      "*"
+    ],
+    "apiKey": "wapi_f36c0ec17b48443eb161f232aef36408",
+    "connections": []
+  },
+  {
+    "createdAt": "2026-04-27T23:00:24",
+    "apiBaseUrl": "https://ancient-ocean-78301-96aad9a4957a.herokuapp.com",
+    "clientId": "ee3b97d0-1239-11f1-a227-f0038cd89556",
+    "apiKeyId": "0f31c271-1ee3-411f-a6c5-787d08e78800",
+    "name": "GalaxiaTech",
+    "description": "",
+    "plan": null,
+    "permissions": [
+      "*"
+    ],
+    "apiKey": "wapi_517abd0822504d2fa40c92903724b77c",
+    "defaultConnectionId": null,
+    "connections": []
+  }
+]

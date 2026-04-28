@@ -14,6 +14,7 @@ data/wwebjs_cache/
 
 # Runtime local data
 data/chat-sessions.json
+data/generated-api-keys.local.json
 
 # Logs
 logs/

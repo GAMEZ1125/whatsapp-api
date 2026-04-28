@@ -1,0 +1,646 @@
+{
+  "name": "WhatsApp API Engine",
+  "version": "1.0.0",
+  "description": "API REST multitenant para envio de mensajes por WhatsApp, gestion de sesiones, contactos, webhooks, usuarios y bandejas por cliente.",
+  "documentation": {
+    "swaggerUiPath": "/api-docs",
+    "rootInfoPath": "/api",
+    "healthPath": "/health"
+  },
+  "servers": [
+    {
+      "name": "production",
+      "url": "https://ancient-ocean-78301-96aad9a4957a.herokuapp.com"
+    },
+    {
+      "name": "local",
+      "url": "http://localhost:3000"
+    }
+  ],
+  "authentication": {
+    "header": "X-API-Key",
+    "types": [
+      {
+        "name": "master",
+        "description": "Administra la plataforma completa, API keys y tenants."
+      },
+      {
+        "name": "tenant",
+        "description": "Opera solo sobre el clientId asociado a la API key."
+      },
+      {
+        "name": "user",
+        "description": "Clave asociada a usuarios internos, supervisores o agentes."
+      },
+      {
+        "name": "chat-session",
+        "description": "Clave de sesion para agentes del modulo de chat."
+      }
+    ]
+  },
+  "multitenancy": {
+    "mode": "shared-environment",
+    "tenantKeyIsolation": true,
+    "notes": [
+      "Cada tenant debe usar su propia API key.",
+      "Las conexiones y operaciones quedan aisladas por clientId.",
+      "Un tenant no puede operar sobre connectionId de otro tenant.",
+      "La master key puede administrar cualquier tenant."
+    ]
+  },
+  "runtime": {
+    "portEnv": "PORT",
+    "corsOriginsEnv": "ALLOWED_ORIGINS",
+    "rateLimit": {
+      "windowMsEnv": "RATE_LIMIT_WINDOW_MS",
+      "maxRequestsEnv": "RATE_LIMIT_MAX_REQUESTS",
+      "defaultWindowMs": 900000,
+      "defaultMaxRequests": 100
+    },
+    "bodyLimits": {
+      "json": "10mb"
+    }
+  },
+  "environmentVariables": [
+    "PORT",
+    "NODE_ENV",
+    "ALLOWED_ORIGINS",
+    "API_KEY",
+    "HEADLESS",
+    "PUPPETEER_EXECUTABLE_PATH",
+    "RATE_LIMIT_WINDOW_MS",
+    "RATE_LIMIT_MAX_REQUESTS",
+    "LOG_LEVEL",
+    "DB_HOST",
+    "DB_PORT",
+    "DB_NAME",
+    "DB_USER",
+    "DB_PASSWORD",
+    "DB_POOL_LIMIT",
+    "APP_BASE_URL"
+  ],
+  "resources": [
+    {
+      "group": "root",
+      "basePath": "/api",
+      "description": "Informacion general de la API",
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api",
+          "auth": "public",
+          "description": "Retorna nombre, version, rutas principales y notas multitenant."
+        }
+      ]
+    },
+    {
+      "group": "session",
+      "basePath": "/api/session",
+      "description": "Estado y control de conexiones de WhatsApp",
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/session/status",
+          "auth": "apiKey",
+          "description": "Obtiene el estado visible de las conexiones segun el tenant autenticado.",
+          "query": [
+            "connectionId",
+            "clientId"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/session/qr",
+          "auth": "apiKey",
+          "description": "Obtiene el QR en base64 para autenticar una conexion.",
+          "query": [
+            "connectionId",
+            "clientId"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/session/qr/image",
+          "auth": "apiKey",
+          "description": "Obtiene el QR como imagen PNG.",
+          "query": [
+            "connectionId",
+            "clientId"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/session/profile",
+          "auth": "apiKey",
+          "description": "Obtiene el perfil conectado de WhatsApp.",
+          "query": [
+            "connectionId",
+            "clientId"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/session/logout",
+          "auth": "apiKey",
+          "description": "Cierra la sesion de una conexion o del tenant visible.",
+          "body": [
+            "connectionId",
+            "clientId"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/session/restart",
+          "auth": "apiKey",
+          "description": "Reinicia una conexion o las conexiones visibles del tenant.",
+          "body": [
+            "connectionId",
+            "clientId"
+          ]
+        }
+      ]
+    },
+    {
+      "group": "messages",
+      "basePath": "/api/messages",
+      "description": "Envio de mensajes y archivos",
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/messages/send",
+          "auth": "apiKey",
+          "description": "Envia un mensaje de texto.",
+          "body": [
+            "phone",
+            "message",
+            "connectionId",
+            "clientId"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/messages/send-image",
+          "auth": "apiKey",
+          "description": "Envia una imagen por URL o base64.",
+          "body": [
+            "phone",
+            "imageUrl",
+            "base64",
+            "mimetype",
+            "caption",
+            "connectionId",
+            "clientId"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/messages/send-document",
+          "auth": "apiKey",
+          "description": "Envia un documento.",
+          "body": [
+            "phone",
+            "documentUrl",
+            "filename",
+            "caption",
+            "connectionId",
+            "clientId"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/messages/send-bulk",
+          "auth": "apiKey",
+          "description": "Envia el mismo mensaje a varios destinatarios.",
+          "body": [
+            "recipients",
+            "message",
+            "delay",
+            "connectionId",
+            "clientId"
+          ]
+        }
+      ]
+    },
+    {
+      "group": "contacts",
+      "basePath": "/api/contacts",
+      "description": "Validacion e informacion de contactos",
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/contacts/check/:phone",
+          "auth": "apiKey",
+          "description": "Valida si un numero esta registrado en WhatsApp.",
+          "query": [
+            "connectionId",
+            "clientId"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/contacts/check-bulk",
+          "auth": "apiKey",
+          "description": "Valida varios numeros en bloque.",
+          "body": [
+            "phones",
+            "connectionId",
+            "clientId"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/contacts/info/:phone",
+          "auth": "apiKey",
+          "description": "Obtiene informacion del contacto.",
+          "query": [
+            "connectionId",
+            "clientId"
+          ]
+        }
+      ]
+    },
+    {
+      "group": "webhooks",
+      "basePath": "/api/webhooks",
+      "description": "Gestion de webhooks por eventos",
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/webhooks/register",
+          "auth": "apiKey",
+          "description": "Registra un webhook para recibir eventos."
+        },
+        {
+          "method": "GET",
+          "path": "/api/webhooks",
+          "auth": "apiKey",
+          "description": "Lista webhooks registrados."
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/webhooks/:id",
+          "auth": "apiKey",
+          "description": "Elimina un webhook."
+        },
+        {
+          "method": "POST",
+          "path": "/api/webhooks/:id/toggle",
+          "auth": "apiKey",
+          "description": "Activa o desactiva un webhook."
+        }
+      ]
+    },
+    {
+      "group": "apiKeys",
+      "basePath": "/api/auth",
+      "description": "Administracion de API keys",
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/auth/keys",
+          "auth": "masterKey",
+          "description": "Crea una API key para un tenant o integracion."
+        },
+        {
+          "method": "GET",
+          "path": "/api/auth/keys",
+          "auth": "masterKey",
+          "description": "Lista API keys."
+        },
+        {
+          "method": "GET",
+          "path": "/api/auth/keys/:id",
+          "auth": "masterKey",
+          "description": "Obtiene una API key por id."
+        },
+        {
+          "method": "PUT",
+          "path": "/api/auth/keys/:id",
+          "auth": "masterKey",
+          "description": "Actualiza una API key."
+        },
+        {
+          "method": "POST",
+          "path": "/api/auth/keys/:id/revoke",
+          "auth": "masterKey",
+          "description": "Revoca una API key."
+        },
+        {
+          "method": "POST",
+          "path": "/api/auth/keys/:id/activate",
+          "auth": "masterKey",
+          "description": "Activa una API key."
+        },
+        {
+          "method": "POST",
+          "path": "/api/auth/keys/:id/regenerate",
+          "auth": "masterKey",
+          "description": "Regenera el secreto de una API key."
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/auth/keys/:id",
+          "auth": "masterKey",
+          "description": "Elimina una API key."
+        }
+      ]
+    },
+    {
+      "group": "whatsappConnections",
+      "basePath": "/api/whatsapp-connections",
+      "description": "Configuracion de conexiones de WhatsApp por tenant",
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/whatsapp-connections/admin-config",
+          "auth": "chatSessionAuth",
+          "description": "Obtiene la configuracion administrativa del tenant."
+        },
+        {
+          "method": "PUT",
+          "path": "/api/whatsapp-connections/admin-config",
+          "auth": "chatSessionAuth",
+          "description": "Actualiza la configuracion administrativa del tenant."
+        },
+        {
+          "method": "GET",
+          "path": "/api/whatsapp-connections",
+          "auth": "chatSessionAuth",
+          "description": "Lista conexiones visibles del tenant."
+        },
+        {
+          "method": "GET",
+          "path": "/api/whatsapp-connections/:id",
+          "auth": "chatSessionAuth",
+          "description": "Obtiene una conexion."
+        },
+        {
+          "method": "POST",
+          "path": "/api/whatsapp-connections",
+          "auth": "chatSessionAuth",
+          "description": "Crea una conexion de WhatsApp para el tenant."
+        },
+        {
+          "method": "PUT",
+          "path": "/api/whatsapp-connections/:id",
+          "auth": "chatSessionAuth",
+          "description": "Actualiza una conexion."
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/whatsapp-connections/:id",
+          "auth": "chatSessionAuth",
+          "description": "Elimina una conexion."
+        }
+      ]
+    },
+    {
+      "group": "users",
+      "basePath": "/api/users",
+      "description": "Usuarios internos, login y administracion",
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/users/login",
+          "auth": "public",
+          "description": "Inicia sesion y retorna token de usuario."
+        },
+        {
+          "method": "GET",
+          "path": "/api/users",
+          "auth": "chatSessionAuth",
+          "description": "Lista usuarios filtrados por tenant."
+        },
+        {
+          "method": "GET",
+          "path": "/api/users/:id",
+          "auth": "chatSessionAuth",
+          "description": "Obtiene un usuario por id."
+        },
+        {
+          "method": "POST",
+          "path": "/api/users",
+          "auth": "chatSessionAuth",
+          "description": "Crea un usuario."
+        },
+        {
+          "method": "PATCH",
+          "path": "/api/users/:id",
+          "auth": "chatSessionAuth",
+          "description": "Actualiza un usuario."
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/users/:id",
+          "auth": "chatSessionAuth",
+          "description": "Elimina un usuario."
+        }
+      ]
+    },
+    {
+      "group": "chatSessions",
+      "basePath": "/api/chat-sessions",
+      "description": "Bandeja de chats, sesiones de agentes, respuestas rapidas, reglas y stickers",
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/chat-sessions/sessions",
+          "auth": "chatSessionAuth",
+          "description": "Crea una sesion de agente."
+        },
+        {
+          "method": "GET",
+          "path": "/api/chat-sessions/sessions",
+          "auth": "chatSessionAuth",
+          "description": "Lista sesiones."
+        },
+        {
+          "method": "GET",
+          "path": "/api/chat-sessions/sessions/:sessionId",
+          "auth": "chatSessionAuth",
+          "description": "Obtiene una sesion."
+        },
+        {
+          "method": "PUT",
+          "path": "/api/chat-sessions/sessions/:sessionId",
+          "auth": "chatSessionAuth",
+          "description": "Actualiza una sesion."
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/chat-sessions/sessions/:sessionId",
+          "auth": "chatSessionAuth",
+          "description": "Elimina una sesion."
+        },
+        {
+          "method": "POST",
+          "path": "/api/chat-sessions/sessions/:sessionId/regenerate-key",
+          "auth": "chatSessionAuth",
+          "description": "Regenera la clave de una sesion."
+        },
+        {
+          "method": "GET",
+          "path": "/api/chat-sessions/chats/pending",
+          "auth": "chatSessionAuth",
+          "description": "Lista chats pendientes."
+        },
+        {
+          "method": "GET",
+          "path": "/api/chat-sessions/chats",
+          "auth": "chatSessionAuth",
+          "description": "Lista todos los chats."
+        },
+        {
+          "method": "POST",
+          "path": "/api/chat-sessions/chats/assign",
+          "auth": "chatSessionAuth",
+          "description": "Asigna un chat a una sesion."
+        },
+        {
+          "method": "GET",
+          "path": "/api/chat-sessions/chats/:phone",
+          "auth": "chatSessionAuth",
+          "description": "Obtiene el detalle de un chat."
+        },
+        {
+          "method": "PUT",
+          "path": "/api/chat-sessions/chats/:phone",
+          "auth": "chatSessionAuth",
+          "description": "Actualiza el detalle de un chat."
+        },
+        {
+          "method": "GET",
+          "path": "/api/chat-sessions/chats/:phone/messages",
+          "auth": "chatSessionAuth",
+          "description": "Obtiene mensajes del chat."
+        },
+        {
+          "method": "GET",
+          "path": "/api/chat-sessions/stats",
+          "auth": "chatSessionAuth",
+          "description": "Retorna metricas del modulo de chat."
+        },
+        {
+          "method": "GET",
+          "path": "/api/chat-sessions/quick-replies",
+          "auth": "chatSessionAuth",
+          "description": "Lista respuestas rapidas."
+        },
+        {
+          "method": "PUT",
+          "path": "/api/chat-sessions/quick-replies",
+          "auth": "chatSessionAuth",
+          "description": "Actualiza respuestas rapidas."
+        },
+        {
+          "method": "GET",
+          "path": "/api/chat-sessions/auto-chat-rules",
+          "auth": "chatSessionAuth",
+          "description": "Obtiene reglas automaticas de chat."
+        },
+        {
+          "method": "PUT",
+          "path": "/api/chat-sessions/auto-chat-rules",
+          "auth": "chatSessionAuth",
+          "description": "Actualiza reglas automaticas de chat."
+        },
+        {
+          "method": "GET",
+          "path": "/api/chat-sessions/stickers",
+          "auth": "chatSessionAuth",
+          "description": "Lista paquetes de stickers."
+        },
+        {
+          "method": "PUT",
+          "path": "/api/chat-sessions/stickers",
+          "auth": "chatSessionAuth",
+          "description": "Actualiza paquetes de stickers."
+        },
+        {
+          "method": "POST",
+          "path": "/api/chat-sessions/stickers/import-package",
+          "auth": "chatSessionAuth",
+          "description": "Importa un paquete de stickers."
+        },
+        {
+          "method": "GET",
+          "path": "/api/chat-sessions/agent/my-chats",
+          "auth": "chatSessionAuth",
+          "description": "Lista chats del agente autenticado."
+        },
+        {
+          "method": "GET",
+          "path": "/api/chat-sessions/agent/pending",
+          "auth": "chatSessionAuth",
+          "description": "Lista pendientes visibles al agente."
+        },
+        {
+          "method": "POST",
+          "path": "/api/chat-sessions/agent/take",
+          "auth": "chatSessionAuth",
+          "description": "Permite a un agente tomar un chat."
+        },
+        {
+          "method": "POST",
+          "path": "/api/chat-sessions/agent/transfer",
+          "auth": "chatSessionAuth",
+          "description": "Transfiere un chat entre agentes."
+        },
+        {
+          "method": "POST",
+          "path": "/api/chat-sessions/agent/close/:phone",
+          "auth": "chatSessionAuth",
+          "description": "Cierra un chat."
+        },
+        {
+          "method": "GET",
+          "path": "/api/chat-sessions/agent/chat/:phone",
+          "auth": "chatSessionAuth",
+          "description": "Obtiene un chat desde vista de agente."
+        },
+        {
+          "method": "GET",
+          "path": "/api/chat-sessions/agent/chat/:phone/messages",
+          "auth": "chatSessionAuth",
+          "description": "Obtiene mensajes desde vista de agente."
+        },
+        {
+          "method": "POST",
+          "path": "/api/chat-sessions/agent/send",
+          "auth": "chatSessionAuth",
+          "description": "Envia mensaje como agente."
+        },
+        {
+          "method": "POST",
+          "path": "/api/chat-sessions/agent/send-media",
+          "auth": "chatSessionAuth",
+          "description": "Envia media como agente."
+        },
+        {
+          "method": "GET",
+          "path": "/api/chat-sessions/events",
+          "auth": "mixed",
+          "description": "Stream/eventos para actualizaciones de chat."
+        }
+      ]
+    }
+  ],
+  "standardResponses": {
+    "success": {
+      "success": true,
+      "message": "Operacion completada",
+      "data": {}
+    },
+    "error": {
+      "success": false,
+      "error": "Descripcion del error",
+      "code": "ERROR_CODE"
+    }
+  },
+  "generatedFrom": [
+    "src/routes/index.js",
+    "src/index.js",
+    "src/config/swagger.js",
+    "src/routes/*.js"
+  ]
+}

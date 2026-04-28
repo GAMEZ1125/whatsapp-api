@@ -20,6 +20,13 @@ if (!fs.existsSync(AUTH_BASE_DIR)) {
   fs.mkdirSync(AUTH_BASE_DIR, { recursive: true });
 }
 
+const createServiceError = (message, statusCode = 500, code = 'SERVICE_ERROR') => {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  error.code = code;
+  return error;
+};
+
 class WhatsAppRuntime {
   constructor(connection, onEvent) {
     this.connection = connection;
@@ -370,29 +377,70 @@ class WhatsAppMultiService {
     return connections;
   }
 
-  async resolveRuntime(options = {}) {
+  normalizeRequestedConnectionId(connectionId = null) {
+    const normalized = String(connectionId || '').trim();
+    if (!normalized) return null;
+    if (normalized.toLowerCase() === 'default') return 'default';
+    return normalized;
+  }
+
+  async resolveTenantConnections(clientId) {
+    const connections = await whatsappConnectionService.list(clientId);
+    if (!connections.length) {
+      throw createServiceError('No hay conexiones de WhatsApp registradas para este tenant', 404, 'TENANT_CONNECTIONS_NOT_FOUND');
+    }
+    return connections;
+  }
+
+  async resolveConnectionCandidate(options = {}) {
     const { connectionId = null, clientId = null, authClientId = null, isMaster = false } = options;
     const effectiveClientId = isMaster
       ? String(clientId || '').trim() || null
       : String(authClientId || clientId || '').trim() || null;
+    const normalizedConnectionId = this.normalizeRequestedConnectionId(connectionId);
 
-    if (connectionId) {
+    if (normalizedConnectionId && normalizedConnectionId !== 'default') {
       const ownedConnection = isMaster
-        ? await whatsappConnectionService.getById(connectionId)
-        : await whatsappConnectionService.getByIdForClient(connectionId, effectiveClientId);
+        ? await whatsappConnectionService.getById(normalizedConnectionId)
+        : await whatsappConnectionService.getByIdForClient(normalizedConnectionId, effectiveClientId);
 
       if (!ownedConnection) {
         throw createForbiddenError('La conexión solicitada no pertenece al tenant autenticado', 'CONNECTION_FORBIDDEN');
       }
 
-      const direct = this.ensureRuntime(ownedConnection);
-      if (direct.client || direct.isReady) return direct;
-      await direct.initialize();
-      return direct;
+      return { connection: ownedConnection, effectiveClientId };
     }
 
     if (!effectiveClientId) {
-      throw new Error('No hay un tenant disponible para resolver la conexión de WhatsApp');
+      throw createServiceError('No hay un tenant disponible para resolver la conexión de WhatsApp', 400, 'TENANT_REQUIRED');
+    }
+
+    const settings = inboxSettingsService.getClientSettings(effectiveClientId);
+    const tenantConnections = await this.resolveTenantConnections(effectiveClientId);
+    const defaultConnectionId = settings.defaultConnectionId || tenantConnections[0]?.id || null;
+
+    const selectedConnection = normalizedConnectionId === 'default'
+      ? tenantConnections.find((connection) => connection.id === defaultConnectionId) || tenantConnections[0]
+      : tenantConnections.find((connection) => connection.id === defaultConnectionId)
+        || tenantConnections.find((connection) => connection.status === 'connected')
+        || tenantConnections[0];
+
+    if (!selectedConnection) {
+      throw createServiceError('No hay conexiones disponibles para este tenant', 404, 'TENANT_CONNECTION_NOT_FOUND');
+    }
+
+    return { connection: selectedConnection, effectiveClientId };
+  }
+
+  async resolveRuntime(options = {}) {
+    const { connection, effectiveClientId } = await this.resolveConnectionCandidate(options);
+    const normalizedConnectionId = this.normalizeRequestedConnectionId(options.connectionId);
+
+    if (normalizedConnectionId) {
+      const direct = this.ensureRuntime(connection);
+      if (direct.client || direct.isReady) return direct;
+      await direct.initialize();
+      return direct;
     }
 
     const settings = inboxSettingsService.getClientSettings(effectiveClientId);
@@ -419,14 +467,23 @@ class WhatsAppMultiService {
       }
     }
 
-    throw new Error('No hay conexiones de WhatsApp disponibles para este cliente');
+    const candidateRuntime = this.ensureRuntime(connection);
+    if (!candidateRuntime.client) {
+      await candidateRuntime.initialize();
+    }
+
+    if (candidateRuntime.isReady) return candidateRuntime;
+
+    throw createServiceError('No hay conexiones de WhatsApp listas para este cliente', 503, 'WHATSAPP_CONNECTION_NOT_READY');
   }
 
   async getVisibleStatus(options = {}) {
     const { connectionId = null, clientId = null, authClientId = null, isMaster = false } = options;
+    const normalizedConnectionId = this.normalizeRequestedConnectionId(connectionId);
 
-    if (connectionId) {
-      const runtime = await this.resolveRuntime({ connectionId, clientId, authClientId, isMaster });
+    if (normalizedConnectionId) {
+      const { connection } = await this.resolveConnectionCandidate({ connectionId, clientId, authClientId, isMaster });
+      const runtime = this.ensureRuntime(connection);
       return runtime.getStatus();
     }
 
@@ -460,7 +517,11 @@ class WhatsAppMultiService {
   }
 
   async getQRCode(options = {}) {
-    const runtime = await this.resolveRuntime(options);
+    const { connection } = await this.resolveConnectionCandidate(options);
+    const runtime = this.ensureRuntime(connection);
+    if (!runtime.client) {
+      await runtime.initialize();
+    }
     return runtime.getQRCode();
   }
 
