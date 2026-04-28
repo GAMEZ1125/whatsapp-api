@@ -25,6 +25,7 @@ const errorHandler = require('./middlewares/errorHandler');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const eagerWhatsAppInit = String(process.env.WHATSAPP_EAGER_INIT || 'false').toLowerCase() === 'true';
 let autoChatTimer = null;
 const allowedOriginsRaw = String(process.env.ALLOWED_ORIGINS || '*').trim();
 const allowAnyOrigin = !allowedOriginsRaw || allowedOriginsRaw === '*';
@@ -121,7 +122,12 @@ const startServer = async () => {
     logger.info('Iniciando servicio de WhatsApp...');
     await apikeyService.initialize();
     await whatsappConnectionService.initialize();
-    await whatsappService.initialize();
+    if (eagerWhatsAppInit) {
+      logger.info('Inicializacion eager de conexiones WhatsApp habilitada por entorno.');
+      await whatsappService.initialize();
+    } else {
+      logger.info('Inicializacion eager de conexiones WhatsApp deshabilitada. Se inicializan bajo demanda.');
+    }
     await userService.initialize();
     autoChatTimer = setInterval(async () => {
       try {
