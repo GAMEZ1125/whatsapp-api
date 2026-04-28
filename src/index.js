@@ -26,6 +26,31 @@ const errorHandler = require('./middlewares/errorHandler');
 const app = express();
 const PORT = process.env.PORT || 3000;
 let autoChatTimer = null;
+const allowedOriginsRaw = String(process.env.ALLOWED_ORIGINS || '*').trim();
+const allowAnyOrigin = !allowedOriginsRaw || allowedOriginsRaw === '*';
+const allowedOrigins = allowAnyOrigin
+  ? []
+  : allowedOriginsRaw
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean);
+
+const corsOptions = {
+  origin(origin, callback) {
+    // Permite requests sin Origin, como llamadas servidor-servidor o health checks.
+    if (!origin || allowAnyOrigin) {
+      return callback(null, true);
+    }
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`Origen no permitido por CORS: ${origin}`));
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key'],
+};
 
 // Middlewares de seguridad
 // Configuración de Helmet menos restrictiva para HTTP
@@ -36,11 +61,8 @@ app.use(helmet({
   crossOriginResourcePolicy: false,
   originAgentCluster: false
 }));
-app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS?.split(',') || '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key']
-}));
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 // Rate limiting
 const limiter = rateLimit({
