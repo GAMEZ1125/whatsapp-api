@@ -14,7 +14,7 @@
     },
     {
       "name": "local",
-      "url": "http://localhost:3000"
+      "url": "http://localhost:3200"
     }
   ],
   "authentication": {
@@ -44,12 +44,14 @@
     "notes": [
       "Cada tenant debe usar su propia API key.",
       "Las conexiones y operaciones quedan aisladas por clientId.",
+      "El QR disponible siempre corresponde al tenant autenticado y a sus conexiones visibles.",
       "Un tenant no puede operar sobre connectionId de otro tenant.",
       "La master key puede administrar cualquier tenant."
     ]
   },
   "runtime": {
     "portEnv": "PORT",
+    "localPortEnv": "LOCAL_PORT",
     "corsOriginsEnv": "ALLOWED_ORIGINS",
     "trustProxyEnv": "TRUST_PROXY",
     "whatsappEagerInitEnv": "WHATSAPP_EAGER_INIT",
@@ -66,6 +68,7 @@
   },
   "environmentVariables": [
     "PORT",
+    "LOCAL_PORT",
     "NODE_ENV",
     "ALLOWED_ORIGINS",
     "API_KEY",
@@ -118,7 +121,7 @@
           "method": "GET",
           "path": "/api/session/qr",
           "auth": "apiKey",
-          "description": "Obtiene el QR en base64 para autenticar una conexion.",
+          "description": "Obtiene el QR en base64 para autenticar una conexion del tenant autenticado. Si la conexion ya esta conectada, no devuelve QR y debe detenerse el polling.",
           "query": [
             "connectionId",
             "clientId"

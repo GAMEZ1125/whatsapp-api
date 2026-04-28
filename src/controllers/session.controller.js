@@ -93,6 +93,8 @@ const getStatus = async (req, res, next) => {
  */
 const getQRCode = async (req, res, next) => {
   try {
+    const runtimeOptions = getRuntimeOptions(req);
+
     if (!whatsappService.isQrGenerationEnabled()) {
       return res.json({
         success: true,
@@ -100,12 +102,40 @@ const getQRCode = async (req, res, next) => {
           qrCode: null,
           pending: false,
           disabled: true,
+          shouldRequestQr: false,
         },
         message: 'La generacion de QR esta deshabilitada por configuracion.'
       });
     }
 
-    const qrCode = await whatsappService.getQRCode(getRuntimeOptions(req));
+    const status = await whatsappService.getVisibleStatus(runtimeOptions);
+    const isConnected = (() => {
+      if (typeof status?.isReady === 'boolean') {
+        return status.isReady || status.status === 'connected';
+      }
+
+      if (Array.isArray(status?.connections)) {
+        return status.connections.some((connection) => connection.isReady || connection.status === 'connected');
+      }
+
+      return false;
+    })();
+
+    if (isConnected) {
+      return res.json({
+        success: true,
+        data: {
+          qrCode: null,
+          pending: false,
+          connected: true,
+          shouldRequestQr: false,
+          status,
+        },
+        message: 'Conexion ya establecida. No es necesario solicitar QR.'
+      });
+    }
+
+    const qrCode = await whatsappService.getQRCode(runtimeOptions);
     
     if (!qrCode) {
       return res.json({
@@ -113,6 +143,9 @@ const getQRCode = async (req, res, next) => {
         data: {
           qrCode: null,
           pending: true,
+          connected: false,
+          shouldRequestQr: true,
+          status,
         },
         message: 'Inicializando conexión. Reintenta en unos segundos.'
       });
@@ -121,7 +154,11 @@ const getQRCode = async (req, res, next) => {
     res.json({
       success: true,
       data: {
-        qrCode
+        qrCode,
+        pending: false,
+        connected: false,
+        shouldRequestQr: true,
+        status,
       }
     });
   } catch (error) {

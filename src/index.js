@@ -24,7 +24,10 @@ const routes = require('./routes');
 const errorHandler = require('./middlewares/errorHandler');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const isHerokuRuntime = !!process.env.DYNO;
+const PORT = isHerokuRuntime
+  ? Number.parseInt(process.env.PORT || '3000', 10)
+  : Number.parseInt(process.env.LOCAL_PORT || '3200', 10);
 const eagerWhatsAppInit = String(process.env.WHATSAPP_EAGER_INIT || 'false').toLowerCase() === 'true';
 let autoChatTimer = null;
 const trustProxyEnv = process.env.TRUST_PROXY;

@@ -202,12 +202,33 @@ class WhatsAppRuntime {
     const formattedPhone = this.formatPhoneNumber(phone);
     const messageId = uuidv4();
 
+    const sendOptions = { ...(options || {}) };
+    delete sendOptions.connectionId;
+    delete sendOptions.clientId;
+    delete sendOptions.authClientId;
+    delete sendOptions.isMaster;
+    delete sendOptions.delay;
+
     const numberId = await this.client.getNumberId(formattedPhone);
     if (!numberId) {
       throw new Error('El numero no esta registrado en WhatsApp');
     }
 
-    const result = await this.client.sendMessage(formattedPhone, message, options);
+    let result;
+    try {
+      result = await this.client.sendMessage(formattedPhone, message, sendOptions);
+    } catch (error) {
+      const messageText = String(error?.message || '');
+      const isLidError = /No LID for user/i.test(messageText);
+
+      if (!isLidError) {
+        throw error;
+      }
+
+      logger.warn(`Reintentando envio sin opciones avanzadas por error LID (${this.connection.sessionName}): ${messageText}`);
+      result = await this.client.sendMessage(formattedPhone, message, {});
+    }
+
     return {
       messageId,
       whatsappId: result.id._serialized,

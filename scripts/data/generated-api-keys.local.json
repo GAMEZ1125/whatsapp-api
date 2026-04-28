@@ -40,5 +40,35 @@
     "apiKey": "wapi_517abd0822504d2fa40c92903724b77c",
     "defaultConnectionId": null,
     "connections": []
+  },
+  {
+    "createdAt": "2026-04-28T02:13:12",
+    "apiBaseUrl": "https://ancient-ocean-78301-96aad9a4957a.herokuapp.com",
+    "clientId": "ee3b97d0-1239-11f1-a227-f0038cd89556",
+    "apiKeyId": "43af3672-f657-41de-bf23-211c0610b852",
+    "name": "GalaxiaTech",
+    "description": "",
+    "plan": null,
+    "permissions": [
+      "*"
+    ],
+    "apiKey": "wapi_dc8460610ee04555bd35818958de3020",
+    "defaultConnectionId": null,
+    "connections": []
+  },
+  {
+    "createdAt": "2026-04-28T02:14:30",
+    "apiBaseUrl": "https://ancient-ocean-78301-96aad9a4957a.herokuapp.com",
+    "clientId": "ee3b97d0-1239-11f1-a227-f0038cd89556",
+    "apiKeyId": "8e16ed4d-b77c-47ba-b5cb-5537e5432e14",
+    "name": "Gamez",
+    "description": "",
+    "plan": null,
+    "permissions": [
+      "*"
+    ],
+    "apiKey": "wapi_fb9222c3a1a44d74be1528422b3d62a7",
+    "defaultConnectionId": null,
+    "connections": []
   }
 ]
