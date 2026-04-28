@@ -24,7 +24,13 @@ param(
   [string]$OutputFile = ".\data\generated-api-keys.local.json",
 
   [Parameter(Mandatory = $false)]
-  [switch]$IncludeConnections
+  [switch]$IncludeConnections,
+
+  [Parameter(Mandatory = $false)]
+  [bool]$TriggerQrWindow = $true,
+
+  [Parameter(Mandatory = $false)]
+  [int]$QrWindowSeconds = 10
 )
 
 $ErrorActionPreference = "Stop"
@@ -91,6 +97,48 @@ $response = Invoke-RestMethod `
 
 if (-not $response.success) {
   throw "La API no devolvio success=true."
+}
+
+if ($QrWindowSeconds -lt 1) {
+  $QrWindowSeconds = 10
+}
+
+if ($TriggerQrWindow) {
+  Write-Host "" 
+  Write-Host "Inicializando conexiones del tenant para generar QR ($QrWindowSeconds s)..." -ForegroundColor Cyan
+  try {
+    $restartBody = @{
+      clientId = $response.data.clientId
+    }
+
+    Invoke-RestMethod `
+      -Method Post `
+      -Uri "$normalizedBaseUrl/api/session/restart" `
+      -Headers @{
+        "Content-Type" = "application/json"
+        "X-API-Key" = $response.data.key
+      } `
+      -Body ($restartBody | ConvertTo-Json -Depth 5) | Out-Null
+
+    Start-Sleep -Seconds $QrWindowSeconds
+
+    $logoutBody = @{
+      clientId = $response.data.clientId
+    }
+
+    Invoke-RestMethod `
+      -Method Post `
+      -Uri "$normalizedBaseUrl/api/session/logout" `
+      -Headers @{
+        "Content-Type" = "application/json"
+        "X-API-Key" = $response.data.key
+      } `
+      -Body ($logoutBody | ConvertTo-Json -Depth 5) | Out-Null
+
+    Write-Host "Ventana QR finalizada. Conexiones del tenant desconectadas." -ForegroundColor Green
+  } catch {
+    Write-Warning "No se pudo ejecutar el disparador QR del tenant: $($_.Exception.Message)"
+  }
 }
 
 $connections = @()
