@@ -65,10 +65,17 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 
 // Rate limiting
+const rateLimitExemptPaths = new Set([
+  '/api/chat-sessions/events',
+  '/api/session/status',
+  '/api/session/qr',
+  '/api/session/qr/image',
+]);
+
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
-  skip: (req) => req.path === '/api/chat-sessions/events',
+  skip: (req) => rateLimitExemptPaths.has(req.path),
   message: {
     success: false,
     error: 'Demasiadas solicitudes, por favor intenta más tarde'
