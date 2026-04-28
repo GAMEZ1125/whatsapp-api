@@ -96,10 +96,13 @@ const getQRCode = async (req, res, next) => {
     const qrCode = await whatsappService.getQRCode(getRuntimeOptions(req));
     
     if (!qrCode) {
-      return res.status(404).json({
-        success: false,
-        error: 'No hay código QR disponible',
-        message: 'La sesión ya está autenticada o aún no se ha generado el QR'
+      return res.json({
+        success: true,
+        data: {
+          qrCode: null,
+          pending: true,
+        },
+        message: 'Inicializando conexión. Reintenta en unos segundos.'
       });
     }
     

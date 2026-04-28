@@ -520,7 +520,9 @@ class WhatsAppMultiService {
     const { connection } = await this.resolveConnectionCandidate(options);
     const runtime = this.ensureRuntime(connection);
     if (!runtime.client) {
-      await runtime.initialize();
+      runtime.initialize().catch((error) => {
+        logger.warn(`No se pudo inicializar la conexion ${connection.id} al solicitar QR: ${error.message}`);
+      });
     }
     return runtime.getQRCode();
   }
