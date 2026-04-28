@@ -29,4 +29,8 @@ router.post('/logout', sessionController.logout);
 // Reiniciar conexión
 router.post('/restart', sessionController.restart);
 
+// Control global de generación de QR (solo master key)
+router.get('/qr-generation', sessionController.getQrGenerationState);
+router.post('/qr-generation', sessionController.setQrGenerationState);
+
 module.exports = router;

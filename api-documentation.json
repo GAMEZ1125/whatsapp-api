@@ -51,6 +51,9 @@
   "runtime": {
     "portEnv": "PORT",
     "corsOriginsEnv": "ALLOWED_ORIGINS",
+    "trustProxyEnv": "TRUST_PROXY",
+    "whatsappEagerInitEnv": "WHATSAPP_EAGER_INIT",
+    "qrGenerationEnabledEnv": "QR_GENERATION_ENABLED",
     "rateLimit": {
       "windowMsEnv": "RATE_LIMIT_WINDOW_MS",
       "maxRequestsEnv": "RATE_LIMIT_MAX_REQUESTS",
@@ -70,6 +73,9 @@
     "PUPPETEER_EXECUTABLE_PATH",
     "RATE_LIMIT_WINDOW_MS",
     "RATE_LIMIT_MAX_REQUESTS",
+    "TRUST_PROXY",
+    "WHATSAPP_EAGER_INIT",
+    "QR_GENERATION_ENABLED",
     "LOG_LEVEL",
     "DB_HOST",
     "DB_PORT",
@@ -156,6 +162,21 @@
           "body": [
             "connectionId",
             "clientId"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/session/qr-generation",
+          "auth": "masterKey",
+          "description": "Consulta si la generacion global de QR esta habilitada."
+        },
+        {
+          "method": "POST",
+          "path": "/api/session/qr-generation",
+          "auth": "masterKey",
+          "description": "Habilita o deshabilita la generacion global de QR sin cerrar conexiones activas.",
+          "body": [
+            "enabled"
           ]
         }
       ]

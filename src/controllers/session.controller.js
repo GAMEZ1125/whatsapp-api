@@ -93,6 +93,18 @@ const getStatus = async (req, res, next) => {
  */
 const getQRCode = async (req, res, next) => {
   try {
+    if (!whatsappService.isQrGenerationEnabled()) {
+      return res.json({
+        success: true,
+        data: {
+          qrCode: null,
+          pending: false,
+          disabled: true,
+        },
+        message: 'La generacion de QR esta deshabilitada por configuracion.'
+      });
+    }
+
     const qrCode = await whatsappService.getQRCode(getRuntimeOptions(req));
     
     if (!qrCode) {
@@ -136,6 +148,10 @@ const getQRCode = async (req, res, next) => {
  */
 const getQRCodeImage = async (req, res, next) => {
   try {
+    if (!whatsappService.isQrGenerationEnabled()) {
+      return res.status(423).send('La generacion de QR esta deshabilitada');
+    }
+
     const qrCode = await whatsappService.getQRCode(getRuntimeOptions(req));
     
     if (!qrCode) {
@@ -234,11 +250,68 @@ const restart = async (req, res, next) => {
   }
 };
 
+const getQrGenerationState = async (req, res, next) => {
+  try {
+    if (!req.apiKeyInfo?.isMaster) {
+      return res.status(403).json({
+        success: false,
+        error: 'Solo la master key puede consultar este estado.',
+        code: 'MASTER_KEY_REQUIRED',
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        enabled: whatsappService.isQrGenerationEnabled(),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const setQrGenerationState = async (req, res, next) => {
+  try {
+    if (!req.apiKeyInfo?.isMaster) {
+      return res.status(403).json({
+        success: false,
+        error: 'Solo la master key puede modificar este estado.',
+        code: 'MASTER_KEY_REQUIRED',
+      });
+    }
+
+    const enabled = req.body?.enabled;
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        error: 'Debes enviar el campo booleano enabled.',
+        code: 'INVALID_QR_STATE',
+      });
+    }
+
+    const currentState = whatsappService.setQrGenerationEnabled(enabled);
+    return res.json({
+      success: true,
+      message: currentState
+        ? 'Generacion de QR habilitada.'
+        : 'Generacion de QR deshabilitada.',
+      data: {
+        enabled: currentState,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getStatus,
   getQRCode,
   getQRCodeImage,
   getProfile,
   logout,
-  restart
+  restart,
+  getQrGenerationState,
+  setQrGenerationState,
 };

@@ -338,6 +338,23 @@ class WhatsAppMultiService {
   constructor() {
     this.runtimes = new Map();
     this.eventHandlers = new Map();
+    this.qrGenerationEnabled = String(process.env.QR_GENERATION_ENABLED || 'true').toLowerCase() !== 'false';
+  }
+
+  isQrGenerationEnabled() {
+    return this.qrGenerationEnabled;
+  }
+
+  setQrGenerationEnabled(enabled) {
+    this.qrGenerationEnabled = !!enabled;
+
+    if (!this.qrGenerationEnabled) {
+      for (const runtime of this.runtimes.values()) {
+        runtime.qrCode = null;
+      }
+    }
+
+    return this.qrGenerationEnabled;
   }
 
   async initialize() {
@@ -533,6 +550,10 @@ class WhatsAppMultiService {
   }
 
   async getQRCode(options = {}) {
+    if (!this.qrGenerationEnabled) {
+      return null;
+    }
+
     const { connection } = await this.resolveConnectionCandidate(options);
     const runtime = this.ensureRuntime(connection);
     if (!runtime.client) {
@@ -677,6 +698,25 @@ class WhatsAppMultiService {
   }
 
   async handleRuntimeEvent(event, payload) {
+    if (event === 'qr' && !this.qrGenerationEnabled) {
+      try {
+        const runtime = this.runtimes.get(payload.connectionId);
+        if (runtime) {
+          runtime.qrCode = null;
+          runtime.status = 'qr_pending';
+          await runtime.persistState({
+            status: 'qr_pending',
+            lastQr: null,
+            qrExpiresAt: null,
+          });
+        }
+      } catch (error) {
+        logger.warn(`No se pudo limpiar QR bloqueado: ${error.message}`);
+      }
+      this.emit('qr_blocked', payload);
+      return;
+    }
+
     if (event === 'message') {
       await this.handleIncomingMessage(payload.message, payload.connection);
       this.emit('message', payload);
